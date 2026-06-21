@@ -18,6 +18,9 @@ backend/test_pagination.py
 backend/find_api.py
 backend/test_detail.py
 
+# ── Screenshots ────────────────────────────────────────────────────────────────────
+screenshots/
+
 # ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
