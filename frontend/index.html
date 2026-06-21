@@ -1,0 +1,1945 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Casa Tracker</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏠</text></svg>">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .table-wrap { overflow-x: auto; }
+    th { white-space: nowrap; cursor: pointer; user-select: none; }
+    th:hover { background: #f1f5f9; }
+    .badge-new    { @apply bg-green-100 text-green-700 text-xs font-semibold px-2 py-0.5 rounded; }
+    .badge-down   { @apply bg-green-100 text-green-700 text-xs font-semibold px-2 py-0.5 rounded; }
+    .badge-up     { @apply bg-red-100 text-red-700 text-xs font-semibold px-2 py-0.5 rounded; }
+    .badge-removed{ @apply bg-gray-200 text-gray-500 text-xs font-semibold px-2 py-0.5 rounded; }
+    @media screen and (max-width: 768px) {
+      input, select, textarea { font-size: 16px !important; }
+    }
+    @media (hover: none) {
+      .session-delete-btn { opacity: 1 !important; }
+    }
+  </style>
+  <script>
+    tailwind.config = { theme: { extend: {} } }
+  </script>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-slate-800" x-data="app()" x-cloak>
+
+  <!-- ── LOGIN ── -->
+  <div x-show="screen === 'login'" class="flex items-center justify-center min-h-screen p-4">
+    <div class="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm">
+      <div class="text-center mb-6">
+        <div class="text-4xl mb-2">🏠</div>
+        <h1 class="text-2xl font-bold text-slate-800">Casa Tracker</h1>
+        <p class="text-slate-500 text-sm mt-1">Seguí los precios de propiedades</p>
+      </div>
+      <form @submit.prevent="login">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Usuario</label>
+        <input
+          x-model="username"
+          type="text"
+          placeholder="ej: facu"
+          pattern="[a-zA-Z0-9_\-]+"
+          title="Solo letras, números, _ y -"
+          required
+          class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-1"
+        />
+        <p class="text-xs text-slate-400 mb-4">Sin espacios ni caracteres especiales</p>
+        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg py-2 transition">
+          Entrar →
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── STICKY TOP BAR ── -->
+  <div x-show="screen !== 'login'" x-cloak
+    class="sticky top-0 z-[1000] bg-white border-b border-slate-200 shadow-sm">
+    <div class="px-4 h-12 flex items-center gap-3">
+
+      <!-- Brand -->
+      <span class="font-bold text-slate-800 text-sm shrink-0 select-none tracking-tight">
+        🏠<span class="hidden sm:inline"> Casa Tracker</span>
+      </span>
+      <span class="text-slate-200 shrink-0">|</span>
+
+      <!-- Breadcrumb -->
+      <div class="flex-1 flex items-center gap-1.5 min-w-0 overflow-hidden text-xs">
+        <span
+          x-show="screen === 'sessions'"
+          @click="if (confirm('¿Cerrar la sesión de ' + username + '?')) logout()"
+          class="shrink-0 text-slate-500 font-medium cursor-pointer hover:text-red-500 transition select-none"
+          x-text="username"></span>
+        <span
+          x-show="screen !== 'sessions'"
+          @click="if (confirm('¿Cerrar la sesión de ' + username + '?')) logout()"
+          class="shrink-0 text-slate-500 font-medium cursor-pointer hover:text-red-500 transition select-none"
+          x-text="username"></span>
+        <span class="shrink-0 text-slate-300">/</span>
+        <!-- Sessions screen: username / Mis búsquedas -->
+        <span x-show="screen === 'sessions'"
+          class="shrink-0 text-slate-700 font-semibold">Mis búsquedas</span>
+        <!-- Session detail screen: username / Mis búsquedas / session -->
+        <template x-if="screen === 'session'">
+          <div class="flex items-center gap-1.5 min-w-0 overflow-hidden">
+            <button @click="goBack()"
+              class="shrink-0 text-slate-500 hover:text-blue-600 transition">Mis búsquedas</button>
+            <span class="shrink-0 text-slate-300">/</span>
+            <span class="text-slate-700 font-semibold truncate min-w-0" x-text="currentSession?.label"></span>
+            <span x-show="currentSession" class="shrink-0 px-1.5 py-0.5 rounded-full font-medium leading-none"
+              :class="currentSession?.search_engine === 'zonaprop' ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700'"
+              x-text="currentSession?.search_engine === 'zonaprop' ? 'Zonaprop' : 'Argenprop'"></span>
+          </div>
+        </template>
+      </div>
+
+      <!-- Right actions — sessions screen -->
+      <div x-show="screen === 'sessions'" class="flex items-center gap-1 shrink-0">
+        <div class="relative" @click.away="sessionsActionsOpen = false"
+          @keydown.escape.window="sessionsActionsOpen = false">
+          <button @click="sessionsActionsOpen = !sessionsActionsOpen"
+            class="p-1.5 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition"
+            title="Acciones">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <circle cx="4" cy="10" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="16" cy="10" r="1.5"/>
+            </svg>
+          </button>
+          <div x-show="sessionsActionsOpen" x-cloak
+            class="absolute top-full right-0 mt-1 w-52 bg-white border border-slate-200 rounded-xl shadow-lg z-[2000] overflow-hidden py-1">
+            <a href="/api/admin/export-db" download="db-backup.json"
+              @click="sessionsActionsOpen = false"
+              class="w-full text-left text-xs px-4 py-2.5 hover:bg-slate-50 text-slate-700 flex items-center gap-2.5">
+              <svg class="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+              </svg>
+              Exportar DB
+            </a>
+            <button @click="importDb(); sessionsActionsOpen = false"
+              class="w-full text-left text-xs px-4 py-2.5 hover:bg-slate-50 text-slate-700 flex items-center gap-2.5">
+              <svg class="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 7.5m0 0L7.5 12m4.5-4.5V21" />
+              </svg>
+              Importar DB
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right actions — session detail screen -->
+      <div x-show="screen === 'session'" class="flex items-center gap-1 shrink-0">
+        <div class="relative" @click.away="actionsOpen = false">
+          <button @click="actionsOpen = !actionsOpen"
+            class="p-1.5 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition"
+            title="Acciones">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <circle cx="4" cy="10" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="16" cy="10" r="1.5"/>
+            </svg>
+          </button>
+          <div x-show="actionsOpen" x-cloak
+            class="absolute top-full right-0 mt-1 w-52 bg-white border border-slate-200 rounded-xl shadow-lg z-[2000] overflow-hidden py-1">
+            <button @click="exportCsv(); actionsOpen = false"
+              class="w-full text-left text-xs px-4 py-2.5 hover:bg-slate-50 text-slate-700 flex items-center gap-2.5">
+              <svg class="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+              </svg>
+              Exportar CSV
+            </button>
+            <div class="border-t border-slate-100 my-1"></div>
+            <button @click="showManualAddressModal = true; actionsOpen = false"
+              class="w-full text-left text-xs px-4 py-2.5 hover:bg-slate-50 text-slate-700 flex items-center gap-2.5">
+              <svg class="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2a2 2 0 01.586-1.414z" />
+              </svg>
+              Editar direcciones manuales
+            </button>
+            <div class="border-t border-slate-100 my-1"></div>
+            <button @click="forceGeocode(); actionsOpen = false"
+              class="w-full text-left text-xs px-4 py-2.5 hover:bg-slate-50 text-slate-700 flex items-center gap-2.5">
+              <svg class="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
+              </svg>
+              Forzar geo faltante
+            </button>
+            <button @click="clearGeodata(); actionsOpen = false"
+              class="w-full text-left text-xs px-4 py-2.5 hover:bg-slate-50 text-slate-700 flex items-center gap-2.5">
+              <svg class="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
+              </svg>
+              Borrar datos de geo
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── SESSIONS LIST ── -->
+  <div x-show="screen === 'sessions'" class="max-w-2xl mx-auto px-3 sm:px-4 py-6 sm:py-8"
+    @keydown.escape.window="if (showNewForm) { showNewForm = false; newFilter = ''; newLabel = ''; newEngine = 'zonaprop'; }">
+
+    <!-- New session button -->
+    <button @click="showNewForm = true"
+      class="w-full border-2 border-dashed border-blue-300 rounded-xl py-4 text-blue-600 hover:border-blue-500 hover:bg-blue-50 transition text-sm font-medium mb-4">
+      + Nueva búsqueda
+    </button>
+
+    <!-- Sessions list -->
+    <div class="space-y-3" x-show="sessions.length > 0">
+      <template x-for="s in sessions" :key="s.id">
+        <div class="relative bg-white rounded-xl shadow-sm hover:shadow-md border border-slate-100 hover:border-blue-200 p-4 transition flex flex-col gap-2 group"
+          :class="s.id === runSessionId && (isRunning || runStatus?.status === 'done' || runStatus?.status === 'error' || runStatus?.status === 'cancelled') && !runDismissed ? 'border-blue-200' : ''">
+          <button
+            @click.stop="confirmDeleteSession(s)"
+            class="session-delete-btn absolute top-2 right-2 p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 transition opacity-0 group-hover:opacity-100"
+            title="Eliminar búsqueda">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+            </svg>
+          </button>
+          <div class="flex items-center gap-2" @click="selectSession(s.id)" style="cursor:pointer">
+            <div class="flex-1 text-left min-w-0">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="text-sm font-semibold text-slate-800 truncate" x-text="s.label"></span>
+                <span class="text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
+                  :class="s.search_engine === 'zonaprop' ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700'"
+                  x-text="s.search_engine === 'zonaprop' ? 'Zonaprop' : 'Argenprop'"></span>
+              </div>
+              <p class="text-xs text-slate-500">
+                <span x-text="s.active_count || 0"></span> propiedades activas
+                <span x-show="s.last_executed"> · Actualizado <span x-text="timeAgo(s.last_executed)"></span></span>
+                <span x-show="!s.last_executed" class="text-amber-600"> · Nunca ejecutado</span>
+              </p>
+            </div>
+            <span class="text-slate-300 group-hover:text-blue-400 text-lg shrink-0">→</span>
+          </div>
+          <!-- Run progress bar — only for the session that owns the active run -->
+          <div x-show="s.id === runSessionId && (isRunning || runStatus?.status === 'done' || runStatus?.status === 'error' || runStatus?.status === 'cancelled') && !runDismissed">
+            <div class="rounded-lg px-3 py-2 text-sm flex items-center gap-3"
+              :class="{
+                'bg-blue-50 border border-blue-200': isRunning,
+                'bg-green-50 border border-green-200': runStatus?.status === 'done',
+                'bg-red-50 border border-red-200': runStatus?.status === 'error',
+                'bg-slate-50 border border-slate-200': runStatus?.status === 'cancelled',
+              }">
+              <svg x-show="isRunning" class="animate-spin h-4 w-4 text-blue-500 shrink-0" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+              </svg>
+              <span x-text="runStatus?.message" class="flex-1 text-slate-700 text-xs"></span>
+              <span x-show="runStatus?.total > 0" class="text-xs text-slate-500" x-text="`${runStatus?.progress}/${runStatus?.total}`"></span>
+              <button @click.stop="dismissRun" class="ml-2 text-slate-400 hover:text-slate-700 text-lg leading-none" title="Cerrar / Detener">&times;</button>
+            </div>
+            <div x-show="isRunning && runStatus?.total > 0" class="h-1.5 bg-slate-200 rounded-full mt-1">
+              <div class="h-1.5 bg-blue-500 rounded-full transition-all" :style="`width: ${Math.round((runStatus.progress / runStatus.total) * 100)}%`"></div>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <p x-show="sessions.length === 0 && !showNewForm" class="text-center text-slate-400 text-sm py-8">
+      Todavía no tenés búsquedas. ¡Creá una!
+    </p>
+
+    <!-- Loading overlay -->
+    <div x-show="loading" class="fixed inset-0 bg-white/70 flex items-center justify-center z-50">
+      <div class="flex items-center gap-3 bg-white rounded-xl shadow-lg px-6 py-4">
+        <svg class="animate-spin h-5 w-5 text-blue-500" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+        </svg>
+        <span class="text-sm text-slate-600" x-text="loadingMsg || 'Cargando...'"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SESSION DETAIL ── -->
+  <div x-show="screen === 'session'" class="w-full px-4 sm:px-6 xl:px-12 2xl:px-20 py-4"
+    @keydown.escape.window="actionsOpen = false">
+
+    <!-- Filter URL editor -->
+    <div class="bg-white rounded-xl border border-slate-200 p-3 mb-3 flex items-center gap-3 flex-wrap">
+      <span class="text-xs font-medium text-slate-500 shrink-0">Filtro:</span>
+      <input x-show="!editingFilter" :value="currentSession?.search_filter" readonly
+        @click="editingFilter = true; editFilter = currentSession.search_filter"
+        class="flex-1 min-w-0 text-xs font-mono text-blue-700 bg-transparent cursor-pointer truncate" />
+      <input x-show="editingFilter" x-model="editFilter" x-ref="filterInput"
+        @keydown.enter="saveFilter" @keydown.escape="editingFilter = false"
+        class="flex-1 min-w-0 text-xs font-mono border border-blue-400 rounded px-2 py-1 focus:outline-none" />
+      <div class="flex gap-2 shrink-0">
+        <button x-show="editingFilter" @click="saveFilter" class="text-xs bg-blue-600 text-white px-2 py-1 rounded">Guardar</button>
+        <button x-show="editingFilter" @click="editingFilter = false" class="text-xs text-slate-500">Cancelar</button>
+        <button x-show="!editingFilter" @click="editingFilter = true; editFilter = currentSession.search_filter" class="text-xs text-blue-500 hover:underline">Editar</button>
+      </div>
+      <!-- Run button -->
+      <button @click="triggerRun" :disabled="isRunning"
+        class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm shrink-0">
+        <span x-show="!isRunning" class="flex items-center gap-1.5">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          Actualizar
+        </span>
+        <span x-show="isRunning" class="flex items-center gap-2">
+          <svg class="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+          </svg>
+          Ejecutando…
+        </span>
+      </button>
+    </div>
+
+    <!-- Run progress bar -->
+    <div x-show="(isRunning || runStatus?.status === 'done' || runStatus?.status === 'error' || runStatus?.status === 'cancelled') && !runDismissed" class="mb-3">
+      <div class="rounded-lg px-4 py-3 text-sm flex items-center gap-3"
+        :class="{
+          'bg-blue-50 border border-blue-200': isRunning,
+          'bg-green-50 border border-green-200': runStatus?.status === 'done',
+          'bg-red-50 border border-red-200': runStatus?.status === 'error',
+          'bg-slate-50 border border-slate-200': runStatus?.status === 'cancelled',
+        }">
+        <svg x-show="isRunning" class="animate-spin h-4 w-4 text-blue-500 shrink-0" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+        </svg>
+        <span x-text="runStatus?.message" class="flex-1 text-slate-700"></span>
+        <span x-show="runStatus?.total > 0" class="text-xs text-slate-500" x-text="`${runStatus?.progress}/${runStatus?.total}`"></span>
+        <button @click="dismissRun" class="ml-2 text-slate-400 hover:text-slate-700 text-lg leading-none" title="Cerrar / Detener">&times;</button>
+      </div>
+      <div x-show="isRunning && runStatus?.total > 0" class="h-1.5 bg-slate-200 rounded-full mt-1">
+        <div class="h-1.5 bg-blue-500 rounded-full transition-all" :style="`width: ${Math.round((runStatus.progress / runStatus.total) * 100)}%`"></div>
+      </div>
+    </div>
+
+    <!-- ── FILTER BAR ── -->
+    <div class="bg-white rounded-xl border border-slate-200 px-3 py-2 mb-3 flex flex-wrap items-center gap-2 shadow-sm">
+      <span class="text-xs font-semibold text-slate-600 shrink-0" x-text="`${filteredHouses.length}`"></span>
+      <span class="text-xs text-slate-400 shrink-0">propiedades</span>
+
+      <div class="w-px h-4 bg-slate-200 shrink-0 mx-1"></div>
+
+      <select x-model="filterReview" @change="tablePage = 1"
+        class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white text-slate-700">
+        <option value="all">Revisión: todas</option>
+        <template x-for="r in REVIEW_OPTIONS" :key="r.value">
+          <option :value="r.value" x-text="r.label"></option>
+        </template>
+      </select>
+
+      <!-- Outer wrapper: full-width flex row on mobile (keeps Filtros + Tabla/Mapa
+           on the same row), transparent on desktop (md:contents = children flow
+           directly in the parent flex row, exactly as before). -->
+      <div class="w-full flex flex-wrap items-center gap-2 md:contents">
+
+        <!-- Filtros toggle: mobile only.
+             order-1 keeps it on row 1 alongside spacer + view toggle. -->
+        <button @click="filtersOpen = !filtersOpen"
+          class="md:hidden flex items-center gap-1.5 text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 hover:border-slate-300 transition shrink-0 order-1 md:order-none">
+          <svg class="w-3 h-3 transition-transform duration-200" :class="filtersOpen ? 'rotate-180' : ''"
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+          </svg>
+          Filtros
+          <span x-show="activeExtraFilters > 0"
+            class="bg-blue-500 text-white text-[10px] font-bold rounded-full min-w-[1rem] h-4 px-1 flex items-center justify-center"
+            x-text="activeExtraFilters"></span>
+        </button>
+
+        <!-- Extra filters: collapsed on mobile (hidden), expanded on mobile (2-col grid).
+             order-3 pushes it to row 2, below the Filtros + Tabla/Mapa row.
+             Always transparent on desktop (md:contents, md:order-none). -->
+        <div :class="filtersOpen ? 'w-full grid grid-cols-2 gap-2 order-3 md:order-none md:contents' : 'hidden md:contents'">
+
+          <select x-model="filterType" @change="tablePage = 1"
+            class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white text-slate-700 w-full md:w-auto">
+            <option value="all">Tipo: todos</option>
+            <template x-for="t in propertyTypes" :key="t">
+              <option :value="t" x-text="t"></option>
+            </template>
+          </select>
+
+          <select x-model="filterStatus" @change="tablePage = 1"
+            class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white text-slate-700 w-full md:w-auto">
+            <option value="active">Activas</option>
+            <option value="all">Todas</option>
+            <option value="removed">Removidas</option>
+          </select>
+
+          <input x-model="filterMaxPrice" @input="tablePage = 1" type="number" placeholder="Precio máx."
+            class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 w-full md:w-28 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+
+          <input x-model="filterAddress" @input="tablePage = 1" type="text" placeholder="Dirección…"
+            class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 w-full md:w-36 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+
+          <input x-model="filterRealEstate" @input="tablePage = 1" type="text" placeholder="Inmobiliaria…"
+            class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 w-full md:w-36 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+
+        </div>
+
+        <!-- order-2 keeps spacer on row 1 with the Filtros button and view toggle -->
+        <div class="flex-1 order-2 md:order-none"></div>
+
+        <!-- View toggle: order-2 stays on row 1 alongside the Filtros button -->
+        <div class="flex rounded-lg border border-slate-200 bg-white overflow-hidden shrink-0 order-2 md:order-none">
+          <button @click="setView('table')"
+            :class="!mapView ? 'bg-slate-800 text-white font-semibold' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'"
+            class="px-3 py-1.5 text-xs transition flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M3 6h18M3 14h18M3 18h18"/>
+            </svg>
+            Tabla
+          </button>
+          <button @click="setView('map')"
+            :class="mapView ? 'bg-slate-800 text-white font-semibold' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'"
+            class="px-3 py-1.5 text-xs transition border-l border-slate-200 flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+            </svg>
+            Mapa
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div x-show="!mapView" class="hidden md:block bg-white rounded-xl border border-slate-200 table-wrap shadow-sm">
+      <table class="min-w-full text-xs">
+        <thead class="bg-slate-50 border-b border-slate-200">
+          <tr>
+            <th class="px-3 py-2 text-right font-semibold text-slate-400">#</th>
+            <th class="px-3 py-2 text-center font-semibold text-slate-500" @click="setSort('status')" title="Estado"><span x-text="sortIndicator('status')"></span></th>
+            <th class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('review')">Revisión <span x-text="sortIndicator('review')"></span></th>
+            <th class="px-3 py-2 text-center font-semibold text-slate-500">Info</th>
+            <th class="px-3 py-2 text-center font-semibold text-slate-500">Ver</th>
+            <th class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('search_engine_id')">ID <span x-text="sortIndicator('search_engine_id')"></span></th>
+            <th class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('type')">Tipo <span x-text="sortIndicator('type')"></span></th>
+            <th class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('address')">Dirección <span x-text="sortIndicator('address')"></span></th>
+            <th class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('price')">Precio <span x-text="sortIndicator('price')"></span></th>
+            <th class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('price_per_m2')">$/m² <span x-text="sortIndicator('price_per_m2')"></span></th>
+            <th class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('covered_m2')">m² Cub <span x-text="sortIndicator('covered_m2')"></span></th>
+            <th class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('total_m2')">m² Tot <span x-text="sortIndicator('total_m2')"></span></th>
+            <th class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('ambientes')">Amb <span x-text="sortIndicator('ambientes')"></span></th>
+            <th class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('dormitorios')">Dorm <span x-text="sortIndicator('dormitorios')"></span></th>
+            <th class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('expenses')">Expensas <span x-text="sortIndicator('expenses')"></span></th>
+            <th class="px-3 py-2 text-left font-semibold text-slate-500">Inmobiliaria</th>
+            <th class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('published_at')">Publicado <span x-text="sortIndicator('published_at')"></span></th>
+            <th class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('last_updated')">Actualizado <span x-text="sortIndicator('last_updated')"></span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="(h, i) in pagedHouses" :key="h.internal_id">
+            <tr class="border-b border-slate-100 hover:bg-slate-50 transition" :class="h.status === 'removed' ? 'opacity-50' : ''">
+              <td class="px-3 py-2 text-right text-slate-400" x-text="(tablePage - 1) * tablePageSize + i + 1"></td>
+              <td class="px-3 py-2 text-center text-base leading-none">
+                <span x-show="h.status === 'active'" class="text-green-500" title="Activa">✓</span>
+                <span x-show="h.status !== 'active'" class="text-slate-300" title="Removida">⊘</span>
+              </td>
+              <td class="px-2 py-1.5">
+                <select
+                  :value="h.review || ''"
+                  @change="saveReview(h, $event.target.value)"
+                  class="text-xs rounded px-1.5 py-1 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 w-28"
+                  :class="reviewClass(h.review)">
+                  <option value="">A revisar</option>
+                  <option value="en_duda">En duda</option>
+                  <option value="interesante">Interesante</option>
+                  <option value="descartada">Descartada</option>
+                  <option value="contactar">Contactar</option>
+                </select>
+              </td>
+              <td class="px-3 py-2 text-center">
+                <button @click="openDetail(h)" class="text-slate-400 hover:text-blue-600 transition" title="Ver detalles">🔍</button>
+              </td>
+              <td class="px-3 py-2 text-center">
+                <a :href="h.url" target="_blank" class="text-blue-500 hover:text-blue-700" title="Ver en el buscador">
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                </a>
+              </td>
+              <td class="px-3 py-2 text-slate-400 font-mono" x-text="h.search_engine_id || '—'"></td>
+              <td class="px-3 py-2 text-slate-700" x-text="h.type || '—'"></td>
+              <td class="px-3 py-2 text-slate-700 max-w-[180px] truncate cursor-default"
+                @mouseenter="showTooltip($event, h.manual_address || h.address)"
+                @mouseleave="hideTooltip()"
+                x-text="(h.manual_address || h.address) || '—'"></td>
+              <td class="px-3 py-2 text-right">
+                <div class="font-semibold text-slate-800" x-text="formatPrice(h.price, h.currency)"></div>
+                <div x-show="priceChangePct(h) !== null"
+                     :class="priceChangePct(h) < 0 ? 'text-green-600' : 'text-red-500'"
+                     class="text-xs font-semibold"
+                     x-text="priceChangePct(h) !== null ? (priceChangePct(h) < 0 ? '↓' : '↑') + ' ' + Math.abs(priceChangePct(h)).toFixed(Math.abs(priceChangePct(h)) < 10 ? 1 : 0) + '%' : ''">
+                </div>
+              </td>
+              <td class="px-3 py-2 text-right text-slate-500" x-text="h.price_per_m2 ? formatPrice(h.price_per_m2, h.currency) : '—'"></td>
+              <td class="px-3 py-2 text-right text-slate-600" x-text="h.covered_m2 ? h.covered_m2 + ' m²' : '—'"></td>
+              <td class="px-3 py-2 text-right text-slate-600" x-text="h.total_m2 ? h.total_m2 + ' m²' : '—'"></td>
+              <td class="px-3 py-2 text-right text-slate-600" x-text="h.ambientes ?? '—'"></td>
+              <td class="px-3 py-2 text-right text-slate-600" x-text="h.dormitorios ?? '—'"></td>
+              <td class="px-3 py-2 text-right text-slate-500" x-text="h.expenses ? formatPrice(h.expenses, h.expenses_currency || 'ARS') : '—'"></td>
+              <td class="px-3 py-2 text-slate-600 max-w-[120px] truncate" :title="h.real_estate" x-text="h.real_estate || '—'"></td>
+              <td class="px-3 py-2 text-slate-400 whitespace-nowrap" x-text="formatDateOnly(h.published_at || h.created_at)"></td>
+              <td class="px-3 py-2 text-slate-400 whitespace-nowrap" x-text="timeAgo(h.last_updated)"></td>
+            </tr>
+          </template>
+          <tr x-show="filteredHouses.length === 0">
+            <td colspan="19" class="px-4 py-8 text-center text-slate-400">
+              <span x-show="houses.length === 0">No hay propiedades todavía. ¡Hacé clic en "Actualizar"!</span>
+              <span x-show="houses.length > 0">No hay resultados para los filtros seleccionados.</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Mobile card list -->
+    <div x-show="!mapView" class="space-y-2 md:hidden">
+      <template x-for="(h, i) in pagedHouses" :key="h.internal_id">
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm px-4 py-3 flex flex-col gap-2"
+             :class="h.status === 'removed' ? 'opacity-50' : ''">
+          <!-- Row 1: review + price -->
+          <div class="flex items-center justify-between gap-2">
+            <select :value="h.review || ''" @change="saveReview(h, $event.target.value)"
+              class="text-xs rounded px-1.5 py-1 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 w-28"
+              :class="reviewClass(h.review)">
+              <option value="">A revisar</option>
+              <option value="en_duda">En duda</option>
+              <option value="interesante">Interesante</option>
+              <option value="descartada">Descartada</option>
+              <option value="contactar">Contactar</option>
+            </select>
+            <div class="text-right">
+              <div class="font-bold text-slate-800 text-sm" x-text="formatPrice(h.price, h.currency)"></div>
+              <div x-show="priceChangePct(h) !== null"
+                   :class="priceChangePct(h) < 0 ? 'text-green-600' : 'text-red-500'"
+                   class="text-xs font-semibold"
+                   x-text="priceChangePct(h) !== null ? (priceChangePct(h) < 0 ? '↓' : '↑') + ' ' + Math.abs(priceChangePct(h)).toFixed(Math.abs(priceChangePct(h)) < 10 ? 1 : 0) + '%' : ''">
+              </div>
+            </div>
+          </div>
+          <!-- Row 2: type · ambientes · m² -->
+          <div class="text-xs text-slate-500">
+            <span x-text="[h.type, h.ambientes ? h.ambientes + ' amb' : null, h.covered_m2 ? h.covered_m2 + ' m²' : null].filter(Boolean).join(' · ') || '—'"></span>
+          </div>
+          <!-- Row 3: address -->
+          <div class="text-xs text-slate-700 truncate" x-text="(h.manual_address || h.address) || '—'"></div>
+          <!-- Row 4: row number + expenses + actions -->
+          <div class="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
+            <span class="text-xs text-slate-300 tabular-nums shrink-0"
+              x-text="(tablePage - 1) * tablePageSize + i + 1"></span>
+            <span class="text-xs text-slate-400" x-show="h.expenses" x-text="'Expensas: ' + formatPrice(h.expenses, h.expenses_currency || 'ARS')"></span>
+            <span class="text-xs text-slate-400" x-show="!h.expenses"></span>
+            <div class="flex items-center gap-3 ml-auto">
+              <button @click="openDetail(h)" class="text-slate-400 hover:text-blue-600 transition text-base" title="Ver detalles">🔍</button>
+              <a :href="h.url" target="_blank" class="text-blue-500 hover:text-blue-700" title="Ver en el buscador">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
+            </div>
+          </div>
+        </div>
+      </template>
+      <div x-show="filteredHouses.length === 0" class="bg-white rounded-xl border border-slate-200 shadow-sm px-4 py-8 text-center text-slate-400 text-sm">
+        <span x-show="houses.length === 0">No hay propiedades todavía. ¡Hacé clic en "Actualizar"!</span>
+        <span x-show="houses.length > 0">No hay resultados para los filtros seleccionados.</span>
+      </div>
+    </div>
+
+    <!-- Pagination controls -->
+    <div x-show="totalPages > 1 && !mapView" class="flex items-center justify-between mt-3 text-xs text-slate-500">
+      <span x-text="`Página ${tablePage} de ${totalPages} · ${filteredHouses.length} propiedades`"></span>
+      <div class="flex items-center gap-1">
+        <button @click="tablePage = Math.max(1, tablePage - 1)" :disabled="tablePage === 1"
+          class="px-3 py-1.5 rounded border border-slate-200 hover:border-blue-300 disabled:opacity-40 disabled:cursor-not-allowed">← Ant</button>
+        <template x-for="p in pageRange" :key="p">
+          <button @click="tablePage = p"
+            :class="p === tablePage ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-200 hover:border-blue-300'"
+            class="hidden sm:inline-flex px-3 py-1.5 rounded border" x-text="p"></button>
+        </template>
+        <button @click="tablePage = Math.min(totalPages, tablePage + 1)" :disabled="tablePage === totalPages"
+          class="px-3 py-1.5 rounded border border-slate-200 hover:border-blue-300 disabled:opacity-40 disabled:cursor-not-allowed">Sig →</button>
+      </div>
+    </div>
+
+    <!-- ── MAP VIEW ── -->
+    <!-- overflow-hidden removed: it clips Leaflet's zoom-animation layers.
+         clip-path achieves the rounded corners without blocking the SVG/canvas
+         layers that Leaflet temporarily expands during zoom. -->
+    <div x-show="mapView" id="map-container" class="relative rounded-xl border border-slate-200 shadow-sm"
+         style="clip-path: inset(0 round 0.75rem)">
+      <div id="map" class="w-full h-full"></div>
+
+      <!-- Geocoding progress overlay -->
+      <div x-show="geocodeStatus?.status === 'running'"
+        class="absolute inset-0 bg-white/85 backdrop-blur-sm flex flex-col items-center justify-center z-[500] gap-3">
+        <svg class="animate-spin h-6 w-6 text-blue-500" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+        </svg>
+        <p class="text-sm font-medium text-slate-600" x-text="geocodeStatus?.message"></p>
+        <div x-show="geocodeStatus?.total > 0" class="w-52">
+          <div class="h-1.5 bg-slate-200 rounded-full">
+            <div class="h-1.5 bg-blue-500 rounded-full transition-all"
+              :style="`width:${Math.round((geocodeStatus.progress/geocodeStatus.total)*100)}%`"></div>
+          </div>
+          <p class="text-xs text-slate-400 text-center mt-1"
+            x-text="`${geocodeStatus.progress} / ${geocodeStatus.total}`"></p>
+        </div>
+        <button @click="skipGeocode()"
+          class="mt-1 text-xs text-slate-500 hover:text-slate-800 border border-slate-300 hover:border-slate-400 bg-white rounded-lg px-4 py-1.5 transition">
+          Saltar y mostrar lo disponible
+        </button>
+      </div>
+
+      <!-- Missing count warning -->
+      <div x-show="mapMissingCount > 0 && geocodeStatus?.status !== 'running'"
+        class="absolute top-3 left-14 z-[400] bg-amber-50 border border-amber-200 text-amber-700 text-xs px-3 py-1.5 rounded-lg shadow-sm pointer-events-none"
+        x-text="`${mapMissingCount} ${mapMissingCount === 1 ? 'propiedad sin' : 'propiedades sin'} ubicación`">
+      </div>
+
+      <!-- Fit bounds button -->
+      <button @click="fitBounds()"
+        x-show="geocodeStatus?.status !== 'running'"
+        class="absolute bottom-4 right-4 z-[400] bg-white shadow border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-blue-600 hover:border-blue-300 transition">
+        ⊙ Centrar
+      </button>
+
+      <!-- Legend -->
+      <div class="absolute bottom-4 left-4 z-[400] bg-white shadow border border-slate-100 rounded-lg px-3 py-2 text-[11px] space-y-1">
+        <template x-for="l in mapLegend" :key="l.label">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full inline-block shrink-0" :style="`background:${l.color}`"></span>
+            <span class="text-slate-500" x-text="l.label"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── HOUSE DETAIL MODAL ── -->
+  <div x-show="detailHouse" @click.self="closeDetail()"
+    @keydown.escape.window="if (detailHouse && !lightboxImg) closeDetail()"
+    @keydown.arrow-up.window="if (!editingModalAddress) { $event.preventDefault(); navigateDetail(-1); }"
+    @keydown.arrow-down.window="if (!editingModalAddress) { $event.preventDefault(); navigateDetail(1); }"
+    class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[1500] p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden">
+
+      <!-- Modal header with gradient -->
+      <div class="bg-gradient-to-r from-blue-600 to-blue-700 px-6 py-5 rounded-t-2xl shrink-0">
+        <div class="flex items-start justify-between gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1 flex-wrap">
+              <span class="text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-medium"
+                x-text="detailHouse?.search_engine === 'zonaprop' ? 'Zonaprop' : 'Argenprop'"></span>
+              <span x-show="detailHouse?.type" class="text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-medium"
+                x-text="detailHouse?.type"></span>
+            </div>
+            <!-- Address display / inline edit -->
+            <div class="flex items-start gap-2 group/addr">
+              <h2 x-show="!editingModalAddress"
+                class="text-white font-bold text-base leading-snug flex-1 line-clamp-2 min-h-[2.75rem]">
+                <span x-text="(detailHouse?.manual_address || detailHouse?.address) || 'Sin dirección'"></span>
+                <span x-show="detailHouse?.manual_address"
+                  class="ml-1.5 text-xs font-normal text-white/60">(manual)</span>
+              </h2>
+              <input x-show="editingModalAddress" x-ref="addrInput"
+                :value="detailHouse?.manual_address || detailHouse?.address || ''"
+                @blur="saveManualAddress(detailHouse, $event.target.value); editingModalAddress = false"
+                @keydown.enter="$event.target.blur()"
+                @keydown.escape="editingModalAddress = false"
+                class="flex-1 bg-white/20 text-white font-bold text-base placeholder-white/50 rounded-lg px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-white/50 min-w-0 h-[2.75rem]" />
+              <!-- Geocoding spinner — shown while geocoding this house -->
+              <svg x-show="!editingModalAddress && _geocodingDetailHouseId === detailHouse?.internal_id"
+                class="animate-spin h-4 w-4 text-white/70 shrink-0 mt-1" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+              </svg>
+              <button x-show="!editingModalAddress && _geocodingDetailHouseId !== detailHouse?.internal_id"
+                @click="editingModalAddress = true; $nextTick(() => { $refs.addrInput.focus(); $refs.addrInput.select(); })"
+                class="shrink-0 mt-0.5 p-1 rounded text-white/40 hover:text-white hover:bg-white/20 transition opacity-0 group-hover/addr:opacity-100">
+                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2a2 2 0 01.586-1.414z"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <button @click="closeDetail()"
+            class="shrink-0 text-white/70 hover:text-white text-2xl leading-none mt-0.5 transition">×</button>
+        </div>
+
+        <!-- Key stats row -->
+        <div class="grid grid-cols-3 gap-2 mt-4">
+          <div class="bg-white/15 rounded-xl px-3 py-2 text-center">
+            <div class="text-white/70 text-xs mb-0.5">Precio</div>
+            <div class="text-white font-bold text-sm" x-text="formatPrice(detailHouse?.price, detailHouse?.currency)"></div>
+          </div>
+          <div class="bg-white/15 rounded-xl px-3 py-2 text-center">
+            <div class="text-white/70 text-xs mb-0.5">$/m²</div>
+            <div class="text-white font-bold text-sm" x-text="detailHouse?.price_per_m2 ? formatPrice(detailHouse.price_per_m2, detailHouse.currency) : '—'"></div>
+          </div>
+          <div class="bg-white/15 rounded-xl px-3 py-2 text-center">
+            <div class="text-white/70 text-xs mb-0.5">Expensas</div>
+            <div class="text-white font-bold text-sm" x-text="detailHouse?.expenses ? formatPrice(detailHouse.expenses, detailHouse.expenses_currency || 'ARS') : '—'"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Image strip -->
+      <div x-show="detailHouse?.images?.length" class="shrink-0 bg-slate-900 px-4 py-3">
+        <div class="flex gap-2 overflow-x-auto scrollbar-hide">
+          <template x-for="(img, i) in (detailHouse?.images || [])" :key="img">
+            <img :src="img" @click="openLightbox(detailHouse.images, i)"
+              class="h-28 w-44 object-cover rounded-lg shrink-0 cursor-zoom-in hover:opacity-80 transition ring-2 ring-transparent hover:ring-blue-400"
+              loading="lazy" />
+          </template>
+        </div>
+      </div>
+
+      <!-- Scrollable body -->
+      <div class="overflow-y-auto flex-1 p-5 space-y-4">
+
+        <!-- Specs chips -->
+        <div class="flex flex-wrap gap-2">
+          <template x-for="chip in detailChips(detailHouse)" :key="chip.label">
+            <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
+              <span class="text-base leading-none" x-text="chip.icon"></span>
+              <div>
+                <div class="text-slate-400 text-[10px] leading-none mb-0.5" x-text="chip.label"></div>
+                <div class="text-slate-700 text-xs font-semibold" x-text="chip.value"></div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Two-column details grid -->
+        <div class="grid grid-cols-2 gap-3">
+
+          <!-- Contact card (left) -->
+          <div x-show="detailHouse?.real_estate || detailHouse?.real_estate_phone"
+            class="bg-blue-50 border border-blue-100 rounded-xl p-3">
+            <div class="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-2">🏢 Inmobiliaria</div>
+            <div class="space-y-1">
+              <div x-show="detailHouse?.real_estate"
+                class="text-sm font-semibold text-slate-800" x-text="detailHouse?.real_estate"></div>
+              <div x-show="detailHouse?.real_estate_phone"
+                class="text-xs text-slate-500" x-text="detailHouse?.real_estate_phone"></div>
+            </div>
+          </div>
+
+          <!-- Dates card (right) -->
+          <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">📅 Fechas</div>
+            <div class="space-y-1.5 text-xs">
+              <div x-show="detailHouse?.published_at" class="flex justify-between gap-2">
+                <span class="text-slate-400">Publicado</span>
+                <span class="text-slate-700 font-medium" x-text="formatDateOnly(detailHouse?.published_at)"></span>
+              </div>
+              <div class="flex justify-between gap-2">
+                <span class="text-slate-400">1ra vez visto</span>
+                <span class="text-slate-700 font-medium" x-text="formatDateOnly(detailHouse?.created_at)"></span>
+              </div>
+              <div class="flex justify-between gap-2">
+                <span class="text-slate-400">Actualizado</span>
+                <span class="text-slate-700 font-medium" x-text="timeAgo(detailHouse?.last_updated)"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Property details card (left) -->
+          <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">📐 Detalles</div>
+            <div class="space-y-1.5 text-xs">
+              <template x-for="[lbl, val] in detailMeta(detailHouse)" :key="lbl">
+                <div class="flex justify-between gap-2">
+                  <span class="text-slate-400" x-text="lbl"></span>
+                  <span class="text-slate-700 font-medium text-right" x-text="val"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Amenities card (right) -->
+          <div x-show="detailHouse?.amenities?.length" class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">✨ Amenities</div>
+            <div class="flex flex-wrap gap-1.5">
+              <template x-for="a in (detailHouse?.amenities || [])" :key="a">
+                <span class="text-xs bg-white border border-slate-200 text-slate-600 px-2.5 py-1 rounded-full shadow-sm" x-text="a"></span>
+              </template>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Description -->
+        <div x-show="detailHouse?.description" class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">📄 Descripción</div>
+          <p class="text-xs text-slate-600 leading-relaxed whitespace-pre-line" x-text="detailHouse?.description"></p>
+        </div>
+
+        <!-- Price history -->
+        <div x-show="detailHouse?.previous_prices?.length" class="bg-amber-50 border border-amber-100 rounded-xl p-3">
+          <div class="text-xs font-semibold text-amber-600 uppercase tracking-wide mb-2">📈 Historial de precios</div>
+          <div class="space-y-1">
+            <template x-for="(ph, i) in (detailHouse?.previous_prices || [])" :key="i">
+              <div class="flex justify-between text-xs py-1 border-b border-amber-100 last:border-0">
+                <span class="text-slate-500" x-text="formatDate(ph.timestamp)"></span>
+                <span class="font-semibold text-slate-700" x-text="formatPrice(ph.price, ph.currency)"></span>
+              </div>
+            </template>
+            <div class="flex justify-between text-xs pt-1 font-bold text-slate-800">
+              <span>Precio actual</span>
+              <span x-text="formatPrice(detailHouse?.price, detailHouse?.currency)"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Notes -->
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <div class="flex items-center justify-between mb-2">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">📝 Notas</div>
+            <span x-show="notesSaved" x-transition.opacity class="text-[10px] text-green-600 font-medium">Guardado ✓</span>
+          </div>
+          <textarea
+            x-ref="notesTextarea"
+            :value="detailHouse?.notes || ''"
+            @blur="saveNotes(detailHouse, $event.target.value)"
+            @input="notesSaved = false"
+            rows="3"
+            placeholder="Escribí tus notas sobre esta propiedad…"
+            class="w-full text-xs text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder-slate-300">
+          </textarea>
+        </div>
+
+        <!-- IDs -->
+        <div class="text-[10px] text-slate-300 space-y-0.5">
+          <div>ID interno: <span x-text="detailHouse?.internal_id"></span></div>
+          <div x-show="detailHouse?.search_engine_id">Search Engine ID: <span x-text="detailHouse?.search_engine_id"></span></div>
+        </div>
+      </div>
+
+      <!-- Modal footer -->
+      <div class="shrink-0 border-t border-slate-100 px-5 py-3 flex items-center justify-between bg-slate-50 rounded-b-2xl">
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-slate-400">Revisión:</span>
+          <select
+            :value="detailHouse?.review || ''"
+            @change="saveReview(detailHouse, $event.target.value)"
+            class="text-xs rounded-full px-3 py-1 border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400 font-semibold"
+            :class="reviewClass(detailHouse?.review)">
+            <option value="">A revisar</option>
+            <option value="en_duda">En duda</option>
+            <option value="interesante">Interesante</option>
+            <option value="descartada">Descartada</option>
+            <option value="contactar">Contactar</option>
+          </select>
+        </div>
+        <div class="flex items-center gap-2">
+          <button x-show="detailHouse?.lat != null" @click="viewInMap(detailHouse)"
+            class="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg transition"
+            title="Ver pin en el mapa">
+            🗺 Ver en mapa
+          </button>
+          <a x-show="detailHouse?.url" :href="detailHouse?.url" target="_blank"
+            class="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-lg transition">
+            Ver en <span x-text="detailHouse?.search_engine === 'zonaprop' ? 'Zonaprop' : 'Argenprop'"></span>
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+            </svg>
+          </a>
+          <div class="flex items-center gap-1 border-l border-slate-200 pl-2">
+            <button @click="navigateDetail(-1)"
+              :disabled="filteredHouses.findIndex(h => h.internal_id === detailHouse?.internal_id) === 0"
+              class="p-1.5 rounded-lg text-slate-500 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed transition"
+              title="Anterior (↑)">▲</button>
+            <button @click="navigateDetail(1)"
+              :disabled="filteredHouses.findIndex(h => h.internal_id === detailHouse?.internal_id) === filteredHouses.length - 1"
+              class="p-1.5 rounded-lg text-slate-500 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed transition"
+              title="Siguiente (↓)">▼</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── LIGHTBOX ── -->
+  <div x-show="lightboxImg" @click.self="lightboxImg = null"
+    @keydown.escape.window="lightboxImg = null"
+    @keydown.arrow-left.window="if (!editingModalAddress) lightboxPrev()"
+    @keydown.arrow-right.window="if (!editingModalAddress) lightboxNext()"
+    class="fixed inset-0 bg-black/95 flex items-center justify-center z-[1600]">
+    <img :src="lightboxImg" class="max-h-[88vh] max-w-[88vw] object-contain rounded-lg shadow-2xl select-none" />
+    <button @click.stop="lightboxPrev()" x-show="lightboxImages.length > 1"
+      class="absolute left-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white text-5xl leading-none transition select-none">‹</button>
+    <button @click.stop="lightboxNext()" x-show="lightboxImages.length > 1"
+      class="absolute right-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white text-5xl leading-none transition select-none">›</button>
+    <button @click="lightboxImg = null"
+      class="absolute top-4 right-4 text-white/70 hover:text-white text-3xl leading-none transition">×</button>
+    <div x-show="lightboxImages.length > 1"
+      class="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/50 text-sm"
+      x-text="`${lightboxIdx + 1} / ${lightboxImages.length}`"></div>
+  </div>
+
+  <!-- ── NEW SEARCH MODAL ── -->
+  <div x-show="showNewForm" x-cloak
+    @click.self="showNewForm = false; newFilter = ''; newLabel = ''; newEngine = 'zonaprop'"
+    class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[1400] p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+        <h2 class="font-bold text-slate-800 text-base">Nueva búsqueda</h2>
+        <button @click="showNewForm = false; newFilter = ''; newLabel = ''; newEngine = 'zonaprop'"
+          class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+      </div>
+      <div class="px-6 py-5 space-y-4">
+        <div>
+          <label class="text-sm font-medium text-slate-600 block mb-2">Buscador</label>
+          <div class="flex gap-4">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="radio" x-model="newEngine" value="zonaprop" />
+              <span class="text-sm">Zonaprop</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="radio" x-model="newEngine" value="argenprop" />
+              <span class="text-sm">Argenprop</span>
+            </label>
+          </div>
+        </div>
+        <div>
+          <label class="text-sm font-medium text-slate-600 block mb-1">Nombre <span class="font-normal text-slate-400">(opcional)</span></label>
+          <input x-model="newLabel" type="text" placeholder="ej: GBA Norte - hasta USD 350k"
+            @keydown.enter="createSession"
+            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+        </div>
+        <div>
+          <label class="text-sm font-medium text-slate-600 block mb-1">Filtro URL</label>
+          <input x-model="newFilter" type="text" placeholder="/inmuebles-venta-gba-norte..."
+            @keydown.enter="createSession"
+            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono" />
+          <p class="text-xs text-slate-400 mt-1.5">
+            URL completa: <span class="font-mono text-blue-600 break-all" x-text="previewUrl()"></span>
+          </p>
+        </div>
+      </div>
+      <div class="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+        <button @click="showNewForm = false; newFilter = ''; newLabel = ''; newEngine = 'zonaprop'"
+          class="text-sm text-slate-500 hover:text-slate-700 px-4 py-2 rounded-lg transition">
+          Cancelar
+        </button>
+        <button @click="createSession" :disabled="!newFilter"
+          class="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-sm font-semibold px-5 py-2 rounded-lg transition">
+          Buscar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MANUAL ADDRESS MODAL ── -->
+  <div x-show="showManualAddressModal" x-cloak
+    @click.self="showManualAddressModal = false"
+    @keydown.escape.window="showManualAddressModal = false"
+    class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[1400] p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden">
+
+      <!-- Header -->
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
+        <div>
+          <h2 class="font-bold text-slate-800 text-base">Direcciones manuales</h2>
+          <p class="text-xs text-slate-400 mt-0.5">
+            Editá la dirección alternativa para las propiedades sin ubicación.
+            <span class="font-semibold text-amber-600"
+              x-text="`${houses.filter(h => h.lat == null && (h.manual_address || h.address)).length} sin geocodificar`"></span>
+          </p>
+        </div>
+        <button @click="showManualAddressModal = false"
+          class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+      </div>
+
+      <!-- Table -->
+      <div class="overflow-y-auto flex-1">
+        <table class="min-w-full text-xs">
+          <thead class="bg-slate-50 border-b border-slate-200 sticky top-0">
+            <tr>
+              <th class="px-3 py-2.5 text-right font-semibold text-slate-300 w-8">#</th>
+              <th class="px-4 py-2.5 text-left font-semibold text-slate-500 w-20">Encontrado</th>
+              <th class="px-4 py-2.5 text-left font-semibold text-slate-500">Dirección</th>
+              <th class="px-4 py-2.5 text-left font-semibold text-slate-500 w-64">Dirección manual</th>
+              <th class="px-3 py-2.5 text-left font-semibold text-slate-500 w-8">Ver</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="(h, i) in manualAddressHouses" :key="h.internal_id">
+              <tr class="border-b border-slate-100 hover:bg-slate-50 transition">
+                <!-- Row number -->
+                <td class="px-3 py-2.5 text-right text-slate-300 tabular-nums" x-text="i + 1"></td>
+                <!-- Found -->
+                <td class="px-4 py-2.5 text-center">
+                  <span x-show="h.lat != null"
+                    class="inline-flex items-center gap-1 text-green-600 font-medium">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+                    </svg>
+                    Sí
+                  </span>
+                  <span x-show="h.lat == null"
+                    class="inline-flex items-center gap-1 text-red-400 font-medium">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                    No
+                  </span>
+                </td>
+                <!-- Address -->
+                <td class="px-4 py-2.5 text-slate-600" x-text="h.address || '—'"></td>
+                <!-- Manual address -->
+                <td class="px-4 py-2">
+                  <div class="flex items-center gap-1.5">
+                    <input type="text"
+                      :value="h.manual_address || ''"
+                      @blur="saveManualAddress(h, $event.target.value)"
+                      @keydown.enter="$event.target.blur()"
+                      @keydown.arrow-left.stop @keydown.arrow-right.stop
+                      placeholder="Dirección alternativa…"
+                      class="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder-slate-300" />
+                    <!-- Saving spinner -->
+                    <svg x-show="_savingAddressId === h.internal_id"
+                      class="w-3.5 h-3.5 text-blue-400 animate-spin shrink-0"
+                      fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                    </svg>
+                    <!-- Saved checkmark -->
+                    <svg x-show="_savedAddressId === h.internal_id && _savingAddressId !== h.internal_id"
+                      class="w-3.5 h-3.5 text-green-500 shrink-0"
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+                    </svg>
+                  </div>
+                </td>
+                <!-- Maps link -->
+                <td class="px-3 py-2.5 text-center">
+                  <a :href="`https://www.google.com/maps?q=${encodeURIComponent(h.manual_address || h.address || '')}`"
+                    x-show="h.manual_address || h.address"
+                    target="_blank" rel="noopener noreferrer"
+                    class="text-slate-400 hover:text-blue-500 transition"
+                    title="Ver en Google Maps">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M12 2C8.686 2 6 4.686 6 8c0 4.5 6 12 6 12s6-7.5 6-12c0-3.314-2.686-6-6-6z"/>
+                      <circle cx="12" cy="8" r="2" fill="currentColor" stroke="none"/>
+                    </svg>
+                  </a>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── TOOLTIP ── -->
+  <div x-show="tooltip.visible" x-cloak
+    :style="`left:${tooltip.x}px; top:${tooltip.y}px`"
+    class="fixed z-[200] pointer-events-none -translate-x-1/2 -translate-y-full mb-1.5 px-3 py-1.5 bg-slate-800 text-slate-100 text-xs rounded-lg shadow-lg max-w-xs leading-relaxed"
+    x-text="tooltip.text">
+  </div>
+
+<script>
+const REVIEW_OPTIONS = [
+  { value: 'en_duda',     label: 'En duda',     cls: 'bg-yellow-100 text-yellow-800' },
+  { value: 'interesante', label: 'Interesante',  cls: 'bg-blue-100 text-blue-800' },
+  { value: 'descartada',  label: 'Descartada',   cls: 'bg-orange-100 text-orange-800' },
+  { value: 'contactar',   label: 'Contactar',    cls: 'bg-green-100 text-green-800' },
+];
+
+function app() {
+  return {
+    screen: 'login',
+    username: '',
+    sessions: [],
+    currentSession: null,
+    houses: [],
+    loading: false,
+    loadingMsg: '',
+    showNewForm: false,
+    newEngine: 'zonaprop',
+    newFilter: '',
+    newLabel: '',
+    editingFilter: false,
+    editFilter: '',
+    runId: null,
+    runSessionId: null,
+    runStatus: null,
+    runDismissed: false,
+    _pollInterval: null,
+    filterStatus: 'active',
+    filterType: 'all',
+    filterReview: 'all',
+    filterMaxPrice: '',
+    filterAddress: '',
+    filterRealEstate: '',
+    filtersOpen: false,
+    sortBy: 'search_engine_id',
+    sortDir: 'asc',
+    detailHouse: null,
+    lightboxImg: null,
+    lightboxImages: [],
+    lightboxIdx: 0,
+    tablePage: 1,
+    tablePageSize: 200,
+    tooltip: { visible: false, text: '', x: 0, y: 0 },
+    _tooltipTimer: null,
+    notesSaved: false,
+    mapView: false,
+    _map: null,
+    _markerLayer: null,
+    geocodeStatus: null,
+    _geocodePoll: null,
+    _geocodeRunId: null,
+    _geocodingDetailHouseId: null,
+    _mapFocusHouse: null,
+    _markerMap: {},
+    mapMissingCount: 0,
+    actionsOpen: false,
+    sessionsActionsOpen: false,
+    showManualAddressModal: false,
+    _savingAddressId: null,
+    _savedAddressId: null,
+    editingModalAddress: false,
+    mapLegend: [
+      { label: 'Sin revisión', color: '#64748b' },
+      { label: 'En duda',      color: '#f59e0b' },
+      { label: 'Interesante',  color: '#3b82f6' },
+      { label: 'Descartada',   color: '#f97316' },
+      { label: 'Contactar',    color: '#22c55e' },
+      { label: 'Removida',     color: '#cbd5e1' },
+    ],
+
+    get isRunning() {
+      return this.runStatus?.status === 'running';
+    },
+
+    get propertyTypes() {
+      return [...new Set(this.houses.map(h => h.type).filter(Boolean))].sort();
+    },
+
+    // Count of active extra filters (everything except filterReview)
+    get activeExtraFilters() {
+      return [
+        this.filterType    !== 'all',
+        this.filterStatus  !== 'active',
+        !!this.filterMaxPrice,
+        !!this.filterAddress,
+        !!this.filterRealEstate,
+      ].filter(Boolean).length;
+    },
+
+    // Normalise a string for fuzzy matching: lowercase + strip accents
+    _norm(s) {
+      return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    },
+
+    get filteredHouses() {
+      let list = [...this.houses];
+      if (this.filterStatus !== 'all') list = list.filter(h => h.status === this.filterStatus);
+      if (this.filterType !== 'all') list = list.filter(h => h.type === this.filterType);
+      if (this.filterReview !== 'all') list = list.filter(h => (h.review || '') === this.filterReview);
+      if (this.filterMaxPrice) list = list.filter(h => !h.price || h.price <= parseFloat(this.filterMaxPrice));
+      if (this.filterAddress) {
+        const q = this._norm(this.filterAddress);
+        list = list.filter(h => this._norm(h.manual_address || h.address).includes(q));
+      }
+      if (this.filterRealEstate) {
+        const q = this._norm(this.filterRealEstate);
+        list = list.filter(h => this._norm(h.real_estate).includes(q));
+      }
+      list.sort((a, b) => {
+        let av = a[this.sortBy], bv = b[this.sortBy];
+        if (av == null) av = this.sortDir === 'asc' ? Infinity : -Infinity;
+        if (bv == null) bv = this.sortDir === 'asc' ? Infinity : -Infinity;
+        if (typeof av === 'string') { av = av.toLowerCase(); bv = (bv || '').toLowerCase(); }
+        if (av < bv) return this.sortDir === 'asc' ? -1 : 1;
+        if (av > bv) return this.sortDir === 'asc' ? 1 : -1;
+        return 0;
+      });
+      return list;
+    },
+
+    get totalPages() {
+      return Math.max(1, Math.ceil(this.filteredHouses.length / this.tablePageSize));
+    },
+
+    get pagedHouses() {
+      const start = (this.tablePage - 1) * this.tablePageSize;
+      return this.filteredHouses.slice(start, start + this.tablePageSize);
+    },
+
+    get pageRange() {
+      const total = this.totalPages, cur = this.tablePage, delta = 2, pages = [];
+      for (let p = Math.max(1, cur - delta); p <= Math.min(total, cur + delta); p++) pages.push(p);
+      return pages;
+    },
+
+    get manualAddressHouses() {
+      function group(h) {
+        const failed = !!h.geocode_failed;
+        const hasManual = !!h.manual_address;
+        if ( failed &&  hasManual) return 0;
+        if ( failed && !hasManual) return 1;
+        if (!failed &&  hasManual) return 2;
+        return 3; // !failed && !hasManual
+      }
+      return [...this.houses].sort((a, b) => {
+        const gd = group(a) - group(b);
+        if (gd !== 0) return gd;
+        return (String(a.search_engine_id || '')).localeCompare(String(b.search_engine_id || ''));
+      });
+    },
+
+    reviewClass(review) {
+      const opt = REVIEW_OPTIONS.find(r => r.value === review);
+      return opt ? opt.cls : 'bg-gray-100 text-gray-600';
+    },
+
+    detailChips(h) {
+      if (!h) return [];
+      const chips = [];
+      if (h.ambientes != null)  chips.push({ icon: '🏠', label: 'Ambientes',   value: h.ambientes });
+      if (h.dormitorios != null) chips.push({ icon: '🛏', label: 'Dormitorios', value: h.dormitorios });
+      if (h.banos != null)       chips.push({ icon: '🚿', label: 'Baños',       value: h.banos });
+      if (h.toilettes != null)   chips.push({ icon: '🪠', label: 'Toilettes',   value: h.toilettes });
+      if (h.covered_m2)          chips.push({ icon: '📐', label: 'm² Cubiertos', value: h.covered_m2 + ' m²' });
+      if (h.total_m2)            chips.push({ icon: '📏', label: 'm² Totales',   value: h.total_m2 + ' m²' });
+      if (h.floor)               chips.push({ icon: '🏢', label: 'Piso',         value: h.floor });
+      if (h.parking != null)     chips.push({ icon: '🚗', label: 'Cochera',      value: h.parking ? 'Sí' : 'No' });
+      if (h.orientation)         chips.push({ icon: '🧭', label: 'Orientación',  value: h.orientation });
+      return chips;
+    },
+
+    detailMeta(h) {
+      if (!h) return [];
+      const rows = [];
+      if (h.condition)  rows.push(['Estado',      h.condition]);
+      if (h.age_years != null) rows.push(['Antigüedad', h.age_years + ' años']);
+      return rows;
+    },
+
+    showTooltip(event, text) {
+      if (!text) return;
+      clearTimeout(this._tooltipTimer);
+      this._tooltipTimer = setTimeout(() => {
+        const r = event.target.getBoundingClientRect();
+        this.tooltip = { visible: true, text, x: r.left + r.width / 2, y: r.top - 6 };
+      }, 500);
+    },
+
+    hideTooltip() {
+      clearTimeout(this._tooltipTimer);
+      this.tooltip.visible = false;
+    },
+
+    init() {
+      window.addEventListener('beforeunload', (e) => {
+        if (this.screen !== 'login') {
+          e.preventDefault();
+          e.returnValue = '';
+        }
+      });
+
+      // Debounced resize: coalesces rapid events (scroll toolbar, pinch zoom,
+      // Ctrl+/-) so we never call invalidateSize mid-animation.
+      let _resizeTimer = null;
+      const onResize = () => {
+        clearTimeout(_resizeTimer);
+        _resizeTimer = setTimeout(() => {
+          if (!this.mapView) return;
+          this._resizeMap();
+          this._map?.invalidateSize({ animate: false });
+        }, 150);
+      };
+      window.addEventListener('resize', onResize);
+      // visualViewport fires on mobile when the browser toolbar appears/disappears
+      window.visualViewport?.addEventListener('resize', onResize);
+
+      const redraw = () => { if (this.mapView && this._map) this.renderPins(); };
+      ['filterStatus', 'filterType', 'filterReview', 'filterMaxPrice', 'filterAddress', 'filterRealEstate', 'houses'].forEach(k => {
+        this.$watch(k, redraw);
+      });
+    },
+
+    async setView(view) {
+      this.mapView = view === 'map';
+      if (this.mapView) {
+        await this.$nextTick();
+        // Double-rAF: first frame un-hides the element, second frame has
+        // correct layout metrics. Only then measure + open the map.
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        this._resizeMap();
+        await this.openMap();
+      }
+    },
+
+    _resizeMap() {
+      const el = document.getElementById('map-container');
+      if (!el) return;
+      const top = el.getBoundingClientRect().top;
+      // Use visualViewport height when available (accounts for mobile
+      // browser toolbar shrinking/growing); fall back to window.innerHeight.
+      const vh = (window.visualViewport?.height ?? window.innerHeight);
+      el.style.height = Math.max(200, vh - top - 16) + 'px';
+    },
+
+    stopGeocoding() {
+      if (this._geocodePoll) { clearInterval(this._geocodePoll); this._geocodePoll = null; }
+      if (this._geocodeRunId) {
+        fetch(`/api/runs/${this._geocodeRunId}`, { method: 'DELETE' }).catch(() => {});
+        this._geocodeRunId = null;
+      }
+      this.geocodeStatus = null;
+    },
+
+    async openMap() {
+      if (this._geocodeRunId) {
+        this.initMap();
+        return;
+      }
+      const needsGeocode = this.houses.some(h => h.lat == null && (h.manual_address || h.address));
+      if (needsGeocode) {
+        try {
+          const res = await fetch(
+            `/api/users/${this.username}/sessions/${this.currentSession.id}/geocode`,
+            { method: 'POST' }
+          );
+          const data = await res.json();
+          if (!data.already_done && data.run_id) {
+            this._geocodeRunId = data.run_id;
+            this.geocodeStatus = { status: 'running', message: 'Geocodificando…', progress: 0, total: 0 };
+            this._geocodePoll = setInterval(() => this.pollGeocode(data.run_id), 2000);
+          }
+        } catch (e) { /* show map anyway */ }
+      }
+      this.initMap();
+    },
+
+    async skipGeocode() {
+      this.stopGeocoding();
+      this.initMap();
+    },
+
+    async pollGeocode(runId) {
+      try {
+        const res = await fetch(`/api/runs/${runId}`);
+        this.geocodeStatus = await res.json();
+        if (this.geocodeStatus.status !== 'running') {
+          clearInterval(this._geocodePoll);
+          this._geocodePoll = null;
+          this._geocodeRunId = null;
+          if (this.geocodeStatus.status === 'done') {
+            const r = await fetch(`/api/users/${this.username}/sessions/${this.currentSession.id}`);
+            const d = await r.json();
+            this.houses = d.houses || [];
+            this.geocodeStatus = null;
+          }
+          if (this.mapView) this.initMap();
+        }
+      } catch (e) {
+        clearInterval(this._geocodePoll);
+        this._geocodePoll = null;
+        this._geocodeRunId = null;
+        if (this.mapView) this.initMap();
+      }
+    },
+
+    initMap() {
+      this._resizeMap();
+      if (this._map) {
+        this._map.invalidateSize({ animate: false });
+        this.renderPins();
+        return;
+      }
+      this._map = L.map('map').setView([-34.61, -58.44], 12);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 19,
+      }).addTo(this._map);
+      // Single deferred invalidate — gives the browser one frame to fully
+      // commit the container height before Leaflet measures it.
+      requestAnimationFrame(() => {
+        this._map?.invalidateSize({ animate: false });
+        this.renderPins();
+      });
+    },
+
+    renderPins() {
+      if (!this._map) return;
+      if (!this._markerLayer) {
+        this._markerLayer = L.layerGroup().addTo(this._map);
+      } else {
+        this._markerLayer.clearLayers();
+      }
+      this._markerMap = {};
+      const placed = this.filteredHouses.filter(h => h.lat != null && h.lng != null);
+      this.mapMissingCount = this.filteredHouses.filter(h => h.lat == null && (h.manual_address || h.address)).length;
+      placed.forEach(h => {
+        const marker = L.circleMarker([h.lat, h.lng], {
+          radius: 9,
+          fillColor: this.pinColor(h),
+          color: '#ffffff',
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.85,
+        });
+        marker.bindTooltip(
+          `<b>${this.escHtml(h.manual_address || h.address || '')}</b><br>${this.escHtml(this.formatPrice(h.price, h.currency))}`,
+          { sticky: true }
+        );
+        marker.on('click', () => this.openDetail(h));
+        this._markerLayer.addLayer(marker);
+        this._markerMap[h.internal_id] = marker;
+      });
+      if (placed.length > 0) this.fitBounds();
+
+      if (this._mapFocusHouse) {
+        const fh = this._mapFocusHouse;
+        this._mapFocusHouse = null;
+        if (fh.lat != null) {
+          this._map.flyTo([fh.lat, fh.lng], 16, { animate: true, duration: 0.8 });
+          const m = this._markerMap[fh.internal_id];
+          if (m) {
+            setTimeout(() => {
+              m.setRadius(15);
+              m.setStyle({ weight: 3, color: '#1d4ed8' });
+              m.openTooltip();
+              setTimeout(() => { m.setRadius(9); m.setStyle({ weight: 2, color: '#ffffff' }); }, 2500);
+            }, 850);
+          }
+        }
+      }
+    },
+
+    fitBounds() {
+      if (!this._map || !this._markerLayer) return;
+      const layers = this._markerLayer.getLayers();
+      if (layers.length > 0) {
+        this._map.fitBounds(L.featureGroup(layers).getBounds().pad(0.35), { maxZoom: 14 });
+      }
+    },
+
+    pinColor(h) {
+      if (h.status === 'removed') return '#cbd5e1';
+      return { en_duda: '#f59e0b', interesante: '#3b82f6', descartada: '#f97316', contactar: '#22c55e' }[h.review] || '#64748b';
+    },
+
+    escHtml(str) {
+      return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    },
+
+    openDetail(h) { this.detailHouse = h; this.lightboxImg = null; this.notesSaved = false; },
+
+    navigateDetail(dir) {
+      if (!this.detailHouse || this.lightboxImg) return;
+      const list = this.filteredHouses;
+      const idx = list.findIndex(h => h.internal_id === this.detailHouse.internal_id);
+      if (idx === -1) return;
+      const next = list[idx + dir];
+      if (next) this.openDetail(next);
+    },
+
+    async viewInMap(h) {
+      this._mapFocusHouse = h;
+      await this.closeDetail();
+      await this.setView('map');
+    },
+
+    async closeDetail() {
+      if (this.detailHouse && this.$refs.notesTextarea) {
+        await this.saveNotes(this.detailHouse, this.$refs.notesTextarea.value);
+      }
+      this.detailHouse = null;
+      this.editingModalAddress = false;
+    },
+
+    openLightbox(images, idx) {
+      this.lightboxImages = images;
+      this.lightboxIdx = idx;
+      this.lightboxImg = images[idx];
+    },
+    lightboxPrev() {
+      // Do nothing if neither the lightbox nor the detail modal is open
+      if (!this.lightboxImg && !this.detailHouse) return;
+      // Open lightbox at the last image when triggered from the detail modal
+      if (!this.lightboxImg && this.detailHouse?.images?.length) {
+        this.openLightbox(this.detailHouse.images, this.detailHouse.images.length - 1);
+        return;
+      }
+      if (!this.lightboxImages.length) return;
+      this.lightboxIdx = (this.lightboxIdx - 1 + this.lightboxImages.length) % this.lightboxImages.length;
+      this.lightboxImg = this.lightboxImages[this.lightboxIdx];
+    },
+    lightboxNext() {
+      // Do nothing if neither the lightbox nor the detail modal is open
+      if (!this.lightboxImg && !this.detailHouse) return;
+      // Open lightbox at the first image when triggered from the detail modal
+      if (!this.lightboxImg && this.detailHouse?.images?.length) {
+        this.openLightbox(this.detailHouse.images, 0);
+        return;
+      }
+      if (!this.lightboxImages.length) return;
+      this.lightboxIdx = (this.lightboxIdx + 1) % this.lightboxImages.length;
+      this.lightboxImg = this.lightboxImages[this.lightboxIdx];
+    },
+
+    previewUrl() {
+      if (!this.newFilter) return '—';
+      const base = this.newEngine === 'zonaprop' ? 'https://www.zonaprop.com.ar' : 'https://www.argenprop.com';
+      return base + (this.newFilter.startsWith('/') ? '' : '/') + this.newFilter;
+    },
+
+    logout() {
+      this.stopPolling();
+      this.stopGeocoding();
+      this.username = '';
+      this.sessions = [];
+      this.currentSession = null;
+      this.houses = [];
+      this.runId = null;
+      this.runStatus = null;
+      this.runDismissed = false;
+      this.detailHouse = null;
+      this.mapView = false;
+      this.actionsOpen = false;
+      this._mapFocusHouse = null;
+      this._markerMap = {};
+      if (this._markerLayer) { this._markerLayer.clearLayers(); }
+      this.screen = 'login';
+    },
+
+    async goBack() {
+      this.stopGeocoding();
+      this.filterReview = 'all';
+      this.filterType = 'all';
+      this.filterStatus = 'active';
+      this.filterMaxPrice = '';
+      this.filterAddress = '';
+      this.filterRealEstate = '';
+      this.filtersOpen = false;
+      try {
+        const res = await fetch(`/api/users/${this.username}`);
+        const data = await res.json();
+        this.sessions = data.sessions || [];
+      } catch (e) { /* show stale list if fetch fails */ }
+      this.screen = 'sessions';
+      window.scrollTo(0, 0);
+    },
+
+    async login() {
+      this.loading = true;
+      try {
+        const res = await fetch(`/api/users/${this.username}`);
+        const data = await res.json();
+        if (data.is_new) {
+          this.loading = false;
+          const ok = confirm(`El usuario "${this.username}" no existe. ¿Querés crearlo?`);
+          if (!ok) return;
+          this.loading = true;
+        }
+        this.sessions = data.sessions || [];
+        this.screen = 'sessions';
+        window.scrollTo(0, 0);
+      } catch (e) { alert('Error al conectar con el servidor.'); }
+      finally { this.loading = false; }
+    },
+
+    async createSession() {
+      if (!this.newFilter) return;
+      this.loading = true; this.loadingMsg = 'Creando búsqueda...';
+      try {
+        const res = await fetch(`/api/users/${this.username}/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            search_engine: this.newEngine,
+            search_filter: this.newFilter.startsWith('/') ? this.newFilter : '/' + this.newFilter,
+            label: this.newLabel || null,
+          }),
+        });
+        const session = await res.json();
+        this.showNewForm = false; this.newFilter = ''; this.newLabel = '';
+        await this.selectSession(session.id);
+        await this.triggerRun();
+      } catch (e) { alert('Error al crear la búsqueda.'); }
+      finally { this.loading = false; this.loadingMsg = ''; }
+    },
+
+    async selectSession(sessionId) {
+      this.loading = true; this.loadingMsg = 'Cargando...';
+      try {
+        const res = await fetch(`/api/users/${this.username}/sessions/${sessionId}`);
+        const data = await res.json();
+        this.currentSession = data;
+        this.houses = data.houses || [];
+        this.editingFilter = false;
+        // Only reset run state when navigating to a different session.
+        // If this session owns the active run, keep the progress bar alive
+        // and ensure polling is running (goBack may have stopped it).
+        if (sessionId !== this.runSessionId) {
+          this.runStatus = null; this.runDismissed = false;
+          this.stopPolling();
+        } else if (this.isRunning && !this._pollInterval) {
+          this.startPolling();
+        }
+        this.tablePage = 1;
+        this.filterReview = 'all';
+        this.filterType = 'all';
+        this.filterStatus = 'active';
+        this.filterMaxPrice = '';
+        this.filterAddress = '';
+        this.filterRealEstate = '';
+        this.filtersOpen = false;
+        this.mapView = false;
+        this._markerMap = {};
+        if (this._markerLayer) { this._markerLayer.clearLayers(); }
+        this.stopGeocoding();
+        this.screen = 'session';
+      } catch (e) { alert('Error al cargar la búsqueda.'); }
+      finally { this.loading = false; this.loadingMsg = ''; }
+    },
+
+    confirmDeleteSession(s) {
+      if (confirm(`¿Eliminar la búsqueda "${s.label}" y todas sus propiedades? Esta acción no se puede deshacer.`)) {
+        this.deleteSession(s.id);
+      }
+    },
+
+    async deleteSession(sessionId) {
+      this.loading = true;
+      try {
+        await fetch(`/api/users/${this.username}/sessions/${sessionId}`, { method: 'DELETE' });
+        this.sessions = this.sessions.filter(s => s.id !== sessionId);
+      } catch (e) { alert('Error al eliminar la búsqueda.'); }
+      finally { this.loading = false; }
+    },
+
+    async forceGeocode() {
+      if (this._geocodeRunId) return;
+      try {
+        const res = await fetch(
+          `/api/users/${this.username}/sessions/${this.currentSession.id}/geocode?force=true`,
+          { method: 'POST' }
+        );
+        const data = await res.json();
+        if (data.already_done) return;
+        this._geocodeRunId = data.run_id;
+        this.geocodeStatus = { status: 'running', message: 'Geocodificando…', progress: 0, total: 0 };
+        this._geocodePoll = setInterval(() => this.pollGeocode(data.run_id), 2000);
+        if (this.mapView) this.initMap();
+      } catch (e) { alert('Error al iniciar geocodificación.'); }
+    },
+
+    importDb() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json,application/json';
+      input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+          const res = await fetch('/api/admin/import-db', { method: 'POST', body: formData });
+          const data = await res.json();
+          if (!res.ok) {
+            alert(`Error al importar:\n\n${data.detail}`);
+            return;
+          }
+          alert('Base de datos importada correctamente.\nCerrando sesión…');
+          this.logout();
+        } catch (err) {
+          alert('Error de red al importar la base de datos.');
+        }
+      };
+      input.click();
+    },
+
+    exportCsv() {
+      const FIELDS = [
+        'internal_id', 'type', 'ambientes', 'dormitorios', 'banos', 'toilettes',
+        'price', 'currency', 'price_per_m2', 'expenses', 'expenses_currency',
+        'address', 'manual_address', 'covered_m2', 'total_m2', 'floor', 'parking',
+        'orientation', 'age_years', 'condition', 'real_estate',
+        'amenities', 'description', 'url', 'status', 'review', 'notes', 'last_updated', 'created_at',
+      ];
+      const escape = v => {
+        if (v == null) return '';
+        const s = Array.isArray(v) ? v.join(', ') : String(v);
+        return s.includes(',') || s.includes('"') || s.includes('\n')
+          ? '"' + s.replace(/"/g, '""') + '"'
+          : s;
+      };
+      const rows = [FIELDS.join(',')];
+      for (const h of this.filteredHouses) {
+        rows.push(FIELDS.map(f => escape(h[f])).join(','));
+      }
+      const blob = new Blob(['﻿' + rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `casas_${this.currentSession.id.slice(0, 8)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+
+    async saveManualAddress(h, value) {
+      const trimmed = value.trim();
+      const effective = h.manual_address || h.address || '';
+      if (trimmed === effective) return;           // no change
+      if (!trimmed && !h.manual_address) return;  // was empty, still empty
+      h.manual_address = trimmed || null;
+      h.lat = null;
+      h.lng = null;
+      h.geocode_failed = false;
+      if (this._markerLayer) {
+        const m = this._markerMap[h.internal_id];
+        if (m) { this._markerLayer.removeLayer(m); delete this._markerMap[h.internal_id]; }
+      }
+      this._savingAddressId = h.internal_id;
+      this._savedAddressId = null;
+      try {
+        await fetch(`/api/houses/${h.internal_id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ manual_address: trimmed || null }),
+        });
+        this._savingAddressId = null;
+        this._savedAddressId = h.internal_id;
+        setTimeout(() => { if (this._savedAddressId === h.internal_id) this._savedAddressId = null; }, 2000);
+        // Trigger geocoding when setting a new manual address OR when clearing
+        // one (falls back to the original scraped address).
+        if (trimmed || h.address) {
+          this._geocodeAfterAddressEdit();
+          // If editing from the detail modal, geocode this house individually
+          // and refresh the modal when done.
+          if (this.detailHouse?.internal_id === h.internal_id) {
+            this._geocodeSingleHouseForModal(h.internal_id);
+          }
+        }
+      } catch (e) {
+        this._savingAddressId = null;
+        console.error('Error saving manual address', e);
+      }
+    },
+
+    async _geocodeSingleHouseForModal(houseId) {
+      this._geocodingDetailHouseId = houseId;
+      try {
+        const res = await fetch(`/api/houses/${houseId}/geocode`, { method: 'POST' });
+        const data = await res.json();
+        if (data.already_done) { this._geocodingDetailHouseId = null; return; }
+        // Poll until done, then refresh detailHouse
+        const runId = data.run_id;
+        const poll = async () => {
+          try {
+            const r = await fetch(`/api/runs/${runId}`);
+            const status = await r.json();
+            if (status.status === 'running') {
+              setTimeout(poll, 1500);
+            } else {
+              this._geocodingDetailHouseId = null;
+              if (status.status === 'done' && this.detailHouse?.internal_id === houseId) {
+                const hr = await fetch(`/api/houses/${houseId}`);
+                const updated = await hr.json();
+                // Merge lat/lng/geocode_failed back into detailHouse and the houses list
+                Object.assign(this.detailHouse, {
+                  lat: updated.lat, lng: updated.lng, geocode_failed: updated.geocode_failed,
+                });
+                const idx = this.houses.findIndex(h => h.internal_id === houseId);
+                if (idx !== -1) Object.assign(this.houses[idx], {
+                  lat: updated.lat, lng: updated.lng, geocode_failed: updated.geocode_failed,
+                });
+              }
+            }
+          } catch (e) { this._geocodingDetailHouseId = null; }
+        };
+        setTimeout(poll, 1500);
+      } catch (e) { this._geocodingDetailHouseId = null; }
+    },
+
+    async _geocodeAfterAddressEdit() {
+      if (!this.currentSession) return;
+      // If already polling a geocode run, the backend will include this house automatically
+      if (this._geocodeRunId) return;
+      try {
+        const res = await fetch(
+          `/api/users/${this.username}/sessions/${this.currentSession.id}/geocode`,
+          { method: 'POST' }
+        );
+        const data = await res.json();
+        if (data.already_done) return;
+        // already_running: another run just started — attach to it
+        this._geocodeRunId = data.run_id;
+        if (!this._geocodePoll) {
+          this._geocodePoll = setInterval(() => this.pollGeocode(data.run_id), 2000);
+        }
+      } catch (e) { console.error('Error triggering geocode after address edit', e); }
+    },
+
+    async clearGeodata() {
+      if (!confirm('¿Borrar los datos de ubicación (lat/lng) de todas las propiedades de esta búsqueda? Podrás volver a geocodificar abriendo el mapa.')) return;
+      try {
+        await fetch(`/api/users/${this.username}/sessions/${this.currentSession.id}/geodata`, { method: 'DELETE' });
+        this.houses.forEach(h => { h.lat = null; h.lng = null; h.geocode_failed = false; });
+        if (this._markerLayer) this._markerLayer.clearLayers();
+      } catch (e) { alert('Error al borrar los datos de geo.'); }
+    },
+
+    async saveFilter() {
+      if (!this.editFilter) return;
+      try {
+        await fetch(`/api/users/${this.username}/sessions/${this.currentSession.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ search_filter: this.editFilter }),
+        });
+        this.currentSession.search_filter = this.editFilter;
+        this.editingFilter = false;
+      } catch (e) { alert('Error al guardar el filtro.'); }
+    },
+
+    async saveNotes(h, value) {
+      if (!h || value === (h.notes || '')) return;
+      h.notes = value;
+      try {
+        await fetch(`/api/houses/${h.internal_id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notes: value }),
+        });
+        this.notesSaved = true;
+        setTimeout(() => { this.notesSaved = false; }, 2000);
+      } catch (e) { console.error('Error saving notes', e); }
+    },
+
+    async saveReview(h, value) {
+      h.review = value;
+      try {
+        await fetch(`/api/houses/${h.internal_id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ review: value }),
+        });
+      } catch (e) { console.error('Error saving review', e); }
+    },
+
+    async triggerRun() {
+      try {
+        const res = await fetch(`/api/users/${this.username}/sessions/${this.currentSession.id}/run`, { method: 'POST' });
+        const data = await res.json();
+        this.runId = data.run_id; this.runSessionId = this.currentSession.id; this.runDismissed = false;
+        this.runStatus = { status: 'running', message: 'Iniciando...', progress: 0, total: 0 };
+        this.startPolling();
+      } catch (e) { alert('Error al iniciar la búsqueda.'); }
+    },
+
+    async dismissRun() {
+      if (this.isRunning && this.runId) {
+        try { await fetch(`/api/runs/${this.runId}`, { method: 'DELETE' }); } catch (e) {}
+        this.stopPolling();
+      }
+      this.runDismissed = true;
+    },
+
+    startPolling() {
+      this.stopPolling();
+      this._pollInterval = setInterval(() => this.pollRun(), 2000);
+    },
+
+    stopPolling() {
+      if (this._pollInterval) { clearInterval(this._pollInterval); this._pollInterval = null; }
+    },
+
+    async pollRun() {
+      if (!this.runId) return;
+      try {
+        const res = await fetch(`/api/runs/${this.runId}`);
+        this.runStatus = await res.json();
+        if (this.runStatus.status !== 'running') {
+          this.stopPolling();
+          if (this.runStatus.status === 'done') await this.selectSession(this.currentSession.id);
+        }
+      } catch (e) { this.stopPolling(); }
+    },
+
+    setSort(col) {
+      if (this.sortBy === col) { this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc'; }
+      else { this.sortBy = col; this.sortDir = 'asc'; }
+      this.tablePage = 1;
+    },
+
+    sortIndicator(col) {
+      if (this.sortBy !== col) return '';
+      return this.sortDir === 'asc' ? '↑' : '↓';
+    },
+
+    priceChangePct(h) {
+      if (!h.previous_prices || h.previous_prices.length === 0) return null;
+      const first = h.previous_prices[0];
+      if (!h.price || !first || !first.price) return null;
+      if (h.currency !== first.currency) return null;
+      const pct = ((h.price - first.price) / first.price) * 100;
+      if (Math.abs(pct) < 0.5) return null;
+      return pct;
+    },
+
+    formatPrice(price, currency) {
+      if (price == null) return '—';
+      const formatted = new Intl.NumberFormat('es-AR').format(Math.round(price));
+      return currency === 'USD' ? `USD ${formatted}` : `$ ${formatted}`;
+    },
+
+    formatDate(iso) {
+      if (!iso) return '—';
+      return new Date(iso).toLocaleString('es-AR', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      });
+    },
+
+    formatDateOnly(iso) {
+      if (!iso) return '—';
+      return new Date(iso).toLocaleDateString('es-AR', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+      });
+    },
+
+    timeAgo(iso) {
+      if (!iso) return '';
+      const diff = Date.now() - new Date(iso).getTime();
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1) return 'ahora';
+      if (mins < 60) return `hace ${mins}m`;
+      const hours = Math.floor(mins / 60);
+      if (hours < 24) return `hace ${hours}h`;
+      const days = Math.floor(hours / 24);
+      if (days < 7) return `hace ${days}d`;
+      return new Date(iso).toLocaleDateString('es-AR');
+    },
+  };
+}
+</script>
+</body>
+</html>

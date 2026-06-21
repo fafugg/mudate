@@ -1,0 +1,26 @@
+# ── App data ──────────────────────────────────────────────────────────────────
+db.json
+db.json.*
+data/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
+
+# ── Dev artifacts ─────────────────────────────────────────────────────────────
+frontend/index-backup.html
+backend/all_requests.json
+backend/test_pagination.py
+backend/find_api.py
+backend/test_detail.py
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Claude Code ───────────────────────────────────────────────────────────────
+.claude/

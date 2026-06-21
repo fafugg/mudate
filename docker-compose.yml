@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      # db.json is stored in ./data/ on your host so it survives container restarts
+      - ./data:/data
+    environment:
+      - DB_PATH=/data/db.json
+      # Optional: better geocoding fallback (free tier: 2 500 req/day)
+      # Get a key at https://opencagedata.com/api#free-trial
+      - OPENCAGE_API_KEY=${OPENCAGE_API_KEY:-}
+    restart: unless-stopped
