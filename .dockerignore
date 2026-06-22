@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+db.json
+data/
+.git/
+.gitignore
+cache/
+screenshots/
+*.md
+.env
+node_modules/

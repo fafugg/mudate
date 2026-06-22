@@ -1,6 +1,6 @@
 import asyncio
 import re
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from playwright.async_api import async_playwright
 
@@ -411,7 +411,7 @@ async def _extract_detail_from_dom(page) -> Dict[str, Any]:
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
-def _parse_price_text(text: str) -> tuple[Optional[float], str]:
+def _parse_price_text(text: str) -> Tuple[Optional[float], str]:
     if not text:
         return None, "USD"
     upper = text.upper()
@@ -421,7 +421,7 @@ def _parse_price_text(text: str) -> tuple[Optional[float], str]:
     return val, currency
 
 
-def _parse_features_text(text: str) -> tuple[Optional[float], Optional[float], Optional[int]]:
+def _parse_features_text(text: str) -> Tuple[Optional[float], Optional[float], Optional[int]]:
     covered = total = ambientes = None
     m = re.search(r"(\d+)\s*m[²2]\s*cub", text, re.IGNORECASE)
     if m:

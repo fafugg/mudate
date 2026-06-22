@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from filelock import FileLock
 from typing import Callable
 
@@ -11,6 +11,7 @@ _lock = FileLock(LOCK_PATH)
 
 
 def _default() -> dict:
+    """Devuelve la estructura vacía por defecto de la base de datos."""
     return {"users": {}, "houses": {}}
 
 
@@ -26,7 +27,8 @@ def read_db() -> dict:
 
 
 def _now() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+    """Devuelve la fecha y hora actual en formato ISO 8601 UTC."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def atomic_update(fn: Callable[[dict], None]) -> None:

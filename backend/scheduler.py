@@ -1,12 +1,15 @@
 import asyncio
+import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from scrapers import run_scrape
 from storage import read_db
+
+logger = logging.getLogger(__name__)
 
 _scheduler = AsyncIOScheduler(timezone="America/Argentina/Buenos_Aires")
 _runs: dict = {}  # shared with main.py after init
@@ -46,7 +49,7 @@ async def _daily_job() -> None:
                     "progress": 0,
                     "total": 0,
                     "message": "Actualización diaria...",
-                    "started_at": datetime.utcnow().isoformat() + "Z",
+                    "started_at": datetime.now(timezone.utc).isoformat(),
                     "finished_at": None,
                     "errors": [],
                     "triggered_by": "scheduler",
@@ -59,6 +62,6 @@ async def _daily_job() -> None:
                         runs=_runs,
                     )
                 except Exception as e:
-                    print(f"[SCHEDULER] Error scraping session {session_id} for {username}: {e}")
+                    logger.error("Error scraping session %s for %s: %s", session_id, username, e)
     except Exception as e:
-        print(f"[SCHEDULER] Daily job failed: {e}")
+        logger.error("Daily job failed: %s", e)

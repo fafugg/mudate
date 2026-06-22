@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from storage import atomic_update, _now, read_db
 
@@ -13,6 +13,36 @@ def get_scraper(engine: str):
     if engine == "argenprop":
         return ArgenpropScraper()
     raise ValueError(f"Unknown engine: {engine}")
+
+
+def _make_run(
+    run_id: str,
+    *,
+    session_id: Optional[str] = None,
+    total: int = 0,
+    message: str = "Iniciando...",
+    triggered_by: str = "manual",
+) -> dict:
+    return {
+        "id": run_id,
+        "session_id": session_id,
+        "status": "running",
+        "progress": 0,
+        "total": total,
+        "message": message,
+        "started_at": _now(),
+        "finished_at": None,
+        "errors": [],
+        "triggered_by": triggered_by,
+    }
+
+
+def _mark_cancelled(runs: Dict[str, dict], run_id: str) -> None:
+    runs[run_id].update({
+        "status": "cancelled",
+        "message": "Cancelado por el usuario.",
+        "finished_at": _now(),
+    })
 
 
 async def run_scrape(
@@ -57,13 +87,7 @@ async def run_scrape(
         )
 
         if should_cancel():
-            runs[run_id].update(
-                {
-                    "status": "cancelled",
-                    "message": "Cancelado por el usuario.",
-                    "finished_at": _now(),
-                }
-            )
+            _mark_cancelled(runs, run_id)
             return
 
         runs[run_id].update(
@@ -76,13 +100,7 @@ async def run_scrape(
         _persist_listings(listings, session, username)
 
         if should_cancel():
-            runs[run_id].update(
-                {
-                    "status": "cancelled",
-                    "message": "Cancelado por el usuario.",
-                    "finished_at": _now(),
-                }
-            )
+            _mark_cancelled(runs, run_id)
             return
 
         runs[run_id].update(

@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+import tempfile
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -13,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from scheduler import get_scheduler_status, setup_scheduler
-from scrapers import run_scrape
+from scrapers import run_scrape, _make_run
 from storage import DB_PATH, _now, atomic_update, read_db
 
 app = FastAPI(title="Casa Tracker")
@@ -39,7 +40,8 @@ async def startup():
 # ── Users & sessions ─────────────────────────────────────────────────────────
 
 @app.get("/api/users/{username}")
-async def get_user(username: str):
+async def get_user(username: str) -> dict:
+    """Devuelve los datos del usuario y sus sesiones ordenadas por última ejecución."""
     _validate_username(username)
     db = read_db()
     is_new = username not in db["users"]
@@ -65,7 +67,8 @@ class CreateSessionBody(BaseModel):
 
 
 @app.post("/api/users/{username}/sessions", status_code=201)
-async def create_session(username: str, body: CreateSessionBody):
+async def create_session(username: str, body: CreateSessionBody) -> dict:
+    """Crea una nueva sesión de búsqueda para el usuario."""
     _validate_username(username)
     if body.search_engine not in ("zonaprop", "argenprop"):
         raise HTTPException(400, "search_engine must be 'zonaprop' or 'argenprop'")
@@ -91,7 +94,8 @@ async def create_session(username: str, body: CreateSessionBody):
 
 
 @app.get("/api/users/{username}/sessions/{session_id}")
-async def get_session(username: str, session_id: str):
+async def get_session(username: str, session_id: str) -> dict:
+    """Devuelve una sesión con sus propiedades asociadas."""
     db = read_db()
     session = _session_or_404(db, username, session_id)
     houses = [db["houses"][hid] for hid in session["house_ids"] if hid in db["houses"]]
@@ -104,7 +108,8 @@ class UpdateSessionBody(BaseModel):
 
 
 @app.delete("/api/users/{username}/sessions/{session_id}")
-async def delete_session(username: str, session_id: str):
+async def delete_session(username: str, session_id: str) -> dict:
+    """Elimina una sesión y todas sus propiedades asociadas."""
     def update(db: dict):
         session = _session_or_404(db, username, session_id)
         for hid in session.get("house_ids", []):
@@ -115,7 +120,8 @@ async def delete_session(username: str, session_id: str):
 
 
 @app.put("/api/users/{username}/sessions/{session_id}")
-async def update_session(username: str, session_id: str, body: UpdateSessionBody):
+async def update_session(username: str, session_id: str, body: UpdateSessionBody) -> dict:
+    """Actualiza el filtro de búsqueda o etiqueta de una sesión."""
     def update(db: dict):
         session = _session_or_404(db, username, session_id)
         if body.search_filter is not None:
@@ -130,7 +136,8 @@ async def update_session(username: str, session_id: str, body: UpdateSessionBody
 @app.post("/api/users/{username}/sessions/{session_id}/run")
 async def run_session(
     username: str, session_id: str, background_tasks: BackgroundTasks
-):
+) -> dict:
+    """Lanza un scraping en background para la sesión indicada."""
     db = read_db()
     session = _session_or_404(db, username, session_id)
 
@@ -141,18 +148,7 @@ async def run_session(
 
     _prune_runs(runs)
     run_id = str(uuid.uuid4())
-    runs[run_id] = {
-        "id": run_id,
-        "session_id": session_id,
-        "status": "running",
-        "progress": 0,
-        "total": 0,
-        "message": "Iniciando...",
-        "started_at": _now(),
-        "finished_at": None,
-        "errors": [],
-        "triggered_by": "manual",
-    }
+    runs[run_id] = _make_run(run_id, session_id=session_id, triggered_by="manual")
     background_tasks.add_task(
         run_scrape,
         session=session,
@@ -170,7 +166,8 @@ class UpdateHouseBody(BaseModel):
 
 
 @app.patch("/api/houses/{house_id}")
-async def update_house(house_id: str, body: UpdateHouseBody):
+async def update_house(house_id: str, body: UpdateHouseBody) -> dict:
+    """Actualiza review, notas o dirección manual de una propiedad."""
     def update(db: dict):
         if house_id not in db["houses"]:
             raise HTTPException(404, "House not found")
@@ -188,7 +185,8 @@ async def update_house(house_id: str, body: UpdateHouseBody):
 
 
 @app.get("/api/houses/{house_id}")
-async def get_house(house_id: str):
+async def get_house(house_id: str) -> dict:
+    """Devuelve los datos completos de una propiedad."""
     db = read_db()
     house = db["houses"].get(house_id)
     if not house:
@@ -197,7 +195,8 @@ async def get_house(house_id: str):
 
 
 @app.post("/api/houses/{house_id}/geocode")
-async def geocode_house(house_id: str, background_tasks: BackgroundTasks):
+async def geocode_house(house_id: str, background_tasks: BackgroundTasks) -> dict:
+    """Lanza la geocodificación de una propiedad individual."""
     db = read_db()
     house = db["houses"].get(house_id)
     if not house:
@@ -208,30 +207,22 @@ async def geocode_house(house_id: str, background_tasks: BackgroundTasks):
 
     _prune_runs(runs)
     run_id = str(uuid.uuid4())
-    runs[run_id] = {
-        "id": run_id,
-        "status": "running",
-        "progress": 0,
-        "total": 1,
-        "message": "Geocodificando…",
-        "started_at": _now(),
-        "finished_at": None,
-        "errors": [],
-        "triggered_by": "geocode_single",
-    }
+    runs[run_id] = _make_run(run_id, total=1, message="Geocodificando…", triggered_by="geocode_single")
     background_tasks.add_task(_run_geocode, house_ids=[house_id], run_id=run_id, runs=runs)
     return {"run_id": run_id, "already_done": False}
 
 
 @app.get("/api/runs/{run_id}")
-async def get_run(run_id: str):
+async def get_run(run_id: str) -> dict:
+    """Devuelve el estado de un scraping o geocodificación en curso."""
     if run_id not in runs:
         raise HTTPException(404, "Run not found")
     return runs[run_id]
 
 
 @app.delete("/api/runs/{run_id}")
-async def cancel_run(run_id: str):
+async def cancel_run(run_id: str) -> dict:
+    """Cancela un scraping o geocodificación en curso."""
     if run_id not in runs:
         raise HTTPException(404, "Run not found")
     run = runs[run_id]
@@ -249,7 +240,8 @@ async def cancel_run(run_id: str):
 async def geocode_session(
     username: str, session_id: str, background_tasks: BackgroundTasks,
     force: bool = False,
-):
+) -> dict:
+    """Lanza la geocodificación en background para todas las propiedades de la sesión."""
     db = read_db()
     session = _session_or_404(db, username, session_id)
 
@@ -274,18 +266,13 @@ async def geocode_session(
 
     _prune_runs(runs)
     run_id = str(uuid.uuid4())
-    runs[run_id] = {
-        "id": run_id,
-        "session_id": session_id,
-        "status": "running",
-        "progress": 0,
-        "total": len(needs_api),
-        "message": "Geocodificando direcciones…",
-        "started_at": _now(),
-        "finished_at": None,
-        "errors": [],
-        "triggered_by": "geocode",
-    }
+    runs[run_id] = _make_run(
+        run_id,
+        session_id=session_id,
+        total=len(needs_api),
+        message="Geocodificando direcciones…",
+        triggered_by="geocode",
+    )
     background_tasks.add_task(_run_geocode, house_ids=needs_api, run_id=run_id, runs=runs)
     return {"run_id": run_id, "already_done": False}
 
@@ -351,7 +338,8 @@ async def _run_geocode(house_ids: List[str], run_id: str, runs: Dict) -> None:
 # ── DB export ────────────────────────────────────────────────────────────────
 
 @app.get("/api/admin/export-db")
-async def export_db():
+async def export_db() -> FileResponse:
+    """Descarga una copia de respaldo de la base de datos."""
     if not os.path.exists(DB_PATH):
         raise HTTPException(404, "Database file not found")
     return FileResponse(
@@ -362,7 +350,8 @@ async def export_db():
 
 
 @app.post("/api/admin/import-db")
-async def import_db(file: UploadFile = File(...)):
+async def import_db(file: UploadFile = File(...)) -> dict:
+    """Importa un respaldo JSON reemplazando la base de datos actual."""
     # 1. Filename check
     if file.filename != "db-backup.json":
         raise HTTPException(
@@ -372,6 +361,9 @@ async def import_db(file: UploadFile = File(...)):
         )
 
     content = await file.read()
+
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(400, "File too large (max 50 MB)")
 
     # 2. JSON validity check
     try:
@@ -393,9 +385,11 @@ async def import_db(file: UploadFile = File(...)):
         )
 
     # 4. Atomic replace
-    tmp_path = DB_PATH + ".import-tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=os.path.dirname(DB_PATH), delete=False
+    ) as tmp:
+        json.dump(data, tmp, ensure_ascii=False, indent=2)
+        tmp_path = tmp.name
     os.replace(tmp_path, DB_PATH)
 
     return {"ok": True}
@@ -404,7 +398,8 @@ async def import_db(file: UploadFile = File(...)):
 # ── Clear geo data ───────────────────────────────────────────────────────────
 
 @app.delete("/api/users/{username}/sessions/{session_id}/geodata")
-async def clear_geodata(username: str, session_id: str):
+async def clear_geodata(username: str, session_id: str) -> dict:
+    """Borra las coordenadas geográficas de todas las propiedades de la sesión."""
     def update(db: dict):
         session = _session_or_404(db, username, session_id)
         for hid in session.get("house_ids", []):
@@ -419,7 +414,8 @@ async def clear_geodata(username: str, session_id: str):
 # ── Scheduler status ─────────────────────────────────────────────────────────
 
 @app.get("/api/scheduler")
-async def scheduler_status():
+async def scheduler_status() -> dict:
+    """Devuelve el estado del programador de tareas."""
     return get_scheduler_status()
 
 
@@ -428,7 +424,8 @@ async def scheduler_status():
 def _prune_runs(runs: dict, max_age_hours: int = 24) -> None:
     """Remove finished runs older than max_age_hours to prevent unbounded growth."""
     from datetime import timedelta
-    cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+    from datetime import timezone
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
     stale = [
         rid for rid, r in runs.items()
         if r.get("status") != "running" and r.get("finished_at")

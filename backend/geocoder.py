@@ -25,12 +25,15 @@ measure from when we *send* the request, not from when we *receive* it.
 """
 
 import asyncio
+import logging
 import os
 import re
 import urllib.parse
 from typing import List, Optional, Tuple
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -148,7 +151,7 @@ async def _nominatim_raw(query: str) -> Optional[Tuple[float, float]]:
         if data:
             return float(data[0]["lat"]), float(data[0]["lon"])
     except Exception as e:
-        print(f"[NOM-ERR] {query!r} → {type(e).__name__}: {e}")
+        logger.error("Nominatim %r -> %s: %s", query, type(e).__name__, e)
     return None
 
 
@@ -167,11 +170,11 @@ async def _nominatim_rl(query: str) -> Optional[Tuple[float, float]]:
     sched = _get_nom_sched()
 
     async with sched:
-        now  = asyncio.get_event_loop().time()
+        now  = asyncio.get_running_loop().time()
         wait = _nom_next_send - now
         if wait > 0:
             await asyncio.sleep(wait)
-        _nom_next_send = asyncio.get_event_loop().time() + _NOM_INTERVAL
+        _nom_next_send = asyncio.get_running_loop().time() + _NOM_INTERVAL
     # Lock released — next task can now schedule itself while this HTTP call runs
     return await _nominatim_raw(query)
 
@@ -195,7 +198,7 @@ async def _opencage(query: str) -> Optional[Tuple[float, float]]:
             geo = results[0]["geometry"]
             return float(geo["lat"]), float(geo["lng"])
     except Exception as e:
-        print(f"[OPENCAGE-ERR] {query!r} → {type(e).__name__}: {e}")
+        logger.error("OpenCage %r -> %s: %s", query, type(e).__name__, e)
     return None
 
 
@@ -225,15 +228,15 @@ async def geocode(address: str) -> Tuple[Optional[float], Optional[float]]:
     for i, variant in enumerate(vs, start=1):
         result = await _nominatim_rl(variant)
         if result:
-            print(f"[GEO-OK] Nominatim-{i} {variant!r} → {result}")
+            logger.info("Nominatim-%d %r -> %s", i, variant, result)
             return result
 
     # Step 4: OpenCage fallback
     if _OPENCAGE_KEY:
         result = await _opencage(vs[0])
         if result:
-            print(f"[GEO-OK] OpenCage {vs[0]!r} → {result}")
+            logger.info("OpenCage %r -> %s", vs[0], result)
             return result
 
-    print(f"[GEO-FAIL] All sources exhausted for {address!r}")
+    logger.warning("All sources exhausted for %r", address)
     return None, None

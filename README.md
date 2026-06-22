@@ -26,7 +26,7 @@ Filter, review, map, and export properties — all from a single self-hosted web
 Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows) or Docker Engine (Linux).
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/casa-tracker.git
+git clone https://github.com/YOUR_USERNAME/casa-tracker.git   # replace YOUR_USERNAME with your fork URL
 cd casa-tracker
 docker compose up
 ```
@@ -83,7 +83,7 @@ sudo pacman -S nss atk at-spi2-core cups libdrm libxkbcommon libxcomposite \
 #### 2. Clone and set up the project
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/casa-tracker.git
+git clone https://github.com/YOUR_USERNAME/casa-tracker.git   # replace YOUR_USERNAME with your fork URL
 cd casa-tracker/backend
 
 # Create virtual environment
@@ -223,6 +223,29 @@ docker compose up --build   # rebuilds the image with the latest code
 | Geocoding | Nominatim, Photon, OpenCage (optional) |
 | Frontend | Alpine.js, Tailwind CSS (CDN), Leaflet.js |
 | Database | JSON flat file with file locking |
+
+---
+
+## Screenshots
+
+![Login](screenshots/1_login.png)
+![Empty Searches](screenshots/2_user_searches_empty.png)
+![New Search](screenshots/3_new_search.png)
+![Searching](screenshots/4_searching.png)
+![House List - Search Complete](screenshots/5_house_list_search_complete.png)
+![House List - Status Management](screenshots/6_house_list_status_management.png)
+![House Detail](screenshots/7_house_detail.png)
+![House List - Map View](screenshots/8_house_list_map_view.png)
+![Filled Searches](screenshots/9_user_searches_filled.png)
+
+---
+
+## Troubleshooting
+
+- **Cloudflare blocks**: If the scraper is blocked by Cloudflare, delete the browser profile directory: `rm -rf ~/.casa_tracker_browser` and restart the app.
+- **Playwright install failures**: Install required system dependencies (`libnss3`, `libatk1.0-0`, `libatk-bridge2.0-0`, `libcups2`, etc.). See the Manual install instructions above for your distro.
+- **Port conflicts**: If port 8000 is in use, pass `--port 8080` to uvicorn (or change the port in `docker-compose.yml`).
+- **zsh activation errors**: If `source .venv/bin/activate` fails in zsh, use the direct venv path instead: `.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000`.
 
 ---
 

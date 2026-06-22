@@ -3,6 +3,10 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 
 class BaseScraper(ABC):
+    """Clase base para scrapers de portales inmobiliarios.
+
+    Cada scraper debe implementar scrape_search() y definir BASE_URL.
+    """
     BASE_URL: str = ""
     delay: float = 2.0  # seconds between page requests
 

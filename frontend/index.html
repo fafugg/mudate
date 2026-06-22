@@ -6,7 +6,7 @@
   <title>Casa Tracker</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏠</text></svg>">
   <script src="https://cdn.tailwindcss.com"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
@@ -14,10 +14,6 @@
     .table-wrap { overflow-x: auto; }
     th { white-space: nowrap; cursor: pointer; user-select: none; }
     th:hover { background: #f1f5f9; }
-    .badge-new    { @apply bg-green-100 text-green-700 text-xs font-semibold px-2 py-0.5 rounded; }
-    .badge-down   { @apply bg-green-100 text-green-700 text-xs font-semibold px-2 py-0.5 rounded; }
-    .badge-up     { @apply bg-red-100 text-red-700 text-xs font-semibold px-2 py-0.5 rounded; }
-    .badge-removed{ @apply bg-gray-200 text-gray-500 text-xs font-semibold px-2 py-0.5 rounded; }
     @media screen and (max-width: 768px) {
       input, select, textarea { font-size: 16px !important; }
     }
@@ -452,10 +448,9 @@
                   class="text-xs rounded px-1.5 py-1 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 w-28"
                   :class="reviewClass(h.review)">
                   <option value="">A revisar</option>
-                  <option value="en_duda">En duda</option>
-                  <option value="interesante">Interesante</option>
-                  <option value="descartada">Descartada</option>
-                  <option value="contactar">Contactar</option>
+                  <template x-for="r in REVIEW_OPTIONS" :key="r.value">
+                    <option :value="r.value" x-text="r.label"></option>
+                  </template>
                 </select>
               </td>
               <td class="px-3 py-2 text-center">
@@ -514,10 +509,9 @@
               class="text-xs rounded px-1.5 py-1 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 w-28"
               :class="reviewClass(h.review)">
               <option value="">A revisar</option>
-              <option value="en_duda">En duda</option>
-              <option value="interesante">Interesante</option>
-              <option value="descartada">Descartada</option>
-              <option value="contactar">Contactar</option>
+              <template x-for="r in REVIEW_OPTIONS" :key="r.value">
+                <option :value="r.value" x-text="r.label"></option>
+              </template>
             </select>
             <div class="text-right">
               <div class="font-bold text-slate-800 text-sm" x-text="formatPrice(h.price, h.currency)"></div>
@@ -839,10 +833,9 @@
             class="text-xs rounded-full px-3 py-1 border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400 font-semibold"
             :class="reviewClass(detailHouse?.review)">
             <option value="">A revisar</option>
-            <option value="en_duda">En duda</option>
-            <option value="interesante">Interesante</option>
-            <option value="descartada">Descartada</option>
-            <option value="contactar">Contactar</option>
+            <template x-for="r in REVIEW_OPTIONS" :key="r.value">
+              <option :value="r.value" x-text="r.label"></option>
+            </template>
           </select>
         </div>
         <div class="flex items-center gap-2">
