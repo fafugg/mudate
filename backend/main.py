@@ -17,7 +17,7 @@ from scheduler import get_scheduler_status, setup_scheduler
 from scrapers import run_scrape, _make_run
 from storage import DB_PATH, _now, atomic_update, read_db
 
-app = FastAPI(title="Casa Tracker")
+app = FastAPI(title="Mudate")
 
 app.add_middleware(
     CORSMiddleware,
@@ -381,7 +381,7 @@ async def import_db(file: UploadFile = File(...)) -> dict:
         raise HTTPException(
             400,
             f"Faltan claves requeridas en el archivo: {', '.join(sorted(missing))}. "
-            "¿Es realmente un backup de Casa Tracker?",
+            "¿Es realmente un backup de Mudate?",
         )
 
     # 4. Atomic replace

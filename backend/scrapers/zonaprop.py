@@ -26,7 +26,7 @@ _HEADLESS = (
 # This prevents a Docker/headless run from poisoning the local profile with
 # bot-flagged Cloudflare cookies, which would block the headed browser too.
 _PROFILE_DIR = os.path.expanduser(
-    "~/.casa_tracker_browser_headless" if _HEADLESS else "~/.casa_tracker_browser"
+    "~/.mudate_browser_headless" if _HEADLESS else "~/.mudate_browser"
 )
 
 _TYPE_MAP = {

@@ -1,8 +1,8 @@
-# Casa Tracker — Documentation
+# Mudate — Documentation
 
 ## Table of Contents
 
-1. [Why Casa Tracker?](#why-casa-tracker)
+1. [Why Mudate?](#why-mudate)
 2. [Getting Started](#getting-started)
 3. [Usability Guide](#usability-guide)
 4. [Integrations](#integrations)
@@ -13,11 +13,11 @@
 
 ---
 
-## Why Casa Tracker?
+## Why Mudate?
 
 Finding a home is not a single moment — it's a process that can stretch over weeks or months. Existing real estate sites like Zonaprop and Argenprop are built for sellers and for the first step of that journey: discovery. Once you've found a listing you like, you're on your own. There's no way to compare two properties side by side, no place to leave yourself a note about why you liked or disliked something, no way to track whether a price dropped since you last checked, and no way to see all the properties you're considering on a map at once.
 
-Casa Tracker solves the entire lifecycle:
+Mudate solves the entire lifecycle:
 
 - **Discovery** — scrape listings in bulk from a filtered search URL, without clicking through pages manually.
 - **Tracking** — every price change is recorded automatically. You always know whether a property got cheaper or more expensive since you first saw it.
@@ -26,7 +26,7 @@ Casa Tracker solves the entire lifecycle:
 - **Mapping** — see every property you're considering on an interactive map with one click.
 - **Persistence** — your data survives browser refreshes, new tabs, and sessions. Everything is saved server-side.
 
-Casa Tracker is designed to be self-hosted: you control your data, and nothing is sent to any third-party analytics service.
+Mudate is designed to be self-hosted: you control your data, and nothing is sent to any third-party analytics service.
 
 ---
 
@@ -41,8 +41,8 @@ Casa Tracker is designed to be self-hosted: you control your data, and nothing i
 ### Option A — Docker (recommended)
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/casa-tracker.git
-cd casa-tracker
+git clone https://github.com/YOUR_USERNAME/mudate.git
+cd mudate
 docker compose up
 ```
 
@@ -64,8 +64,8 @@ docker compose up --build     # rebuild after a code change
 ### Option B — Manual (Python 3.11+)
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/casa-tracker.git
-cd casa-tracker/backend
+git clone https://github.com/YOUR_USERNAME/mudate.git
+cd mudate/backend
 
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
@@ -248,7 +248,7 @@ The scheduler re-scrapes every session for every user every morning at **08:00 A
 ## Folder Structure
 
 ```
-casa-tracker/
+mudate/
 │
 ├── backend/
 │   ├── main.py              # FastAPI app: all API routes + background task launchers
@@ -422,7 +422,7 @@ python tests/test_cloudflare.py
 
 **Common fix:** If the profile is poisoned (a Docker/headless run stored bot-flagged cookies), delete it:
 ```bash
-rm -rf ~/.casa_tracker_browser
+rm -rf ~/.mudate_browser
 ```
 
 ---

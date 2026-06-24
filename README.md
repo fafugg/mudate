@@ -116,7 +116,7 @@ nohup .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 > /tmp/mudate.log 2>
 mkdir -p ~/.config/systemd/user
 cat > ~/.config/systemd/user/mudate.service << 'EOF'
 [Unit]
-Description=Casa Tracker
+Description=Mudate
 After=network.target
 
 [Service]
@@ -242,7 +242,7 @@ docker compose up --build   # rebuilds the image with the latest code
 
 ## Troubleshooting
 
-- **Cloudflare blocks**: If the scraper is blocked by Cloudflare, delete the browser profile directory: `rm -rf ~/.casa_tracker_browser` and restart the app.
+- **Cloudflare blocks**: If the scraper is blocked by Cloudflare, delete the browser profile directory: `rm -rf ~/.mudate_browser` and restart the app.
 - **Playwright install failures**: Install required system dependencies (`libnss3`, `libatk1.0-0`, `libatk-bridge2.0-0`, `libcups2`, etc.). See the Manual install instructions above for your distro.
 - **Port conflicts**: If port 8000 is in use, pass `--port 8080` to uvicorn (or change the port in `docker-compose.yml`).
 - **zsh activation errors**: If `source .venv/bin/activate` fails in zsh, use the direct venv path instead: `.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000`.

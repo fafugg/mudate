@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 BASE_URL = "https://www.zonaprop.com.ar"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-PROFILE = os.path.expanduser("~/.casa_tracker_browser")
+PROFILE = os.path.expanduser("~/.mudate_browser")
 
 
 async def main(search_filter):

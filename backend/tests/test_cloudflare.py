@@ -14,7 +14,7 @@ What it checks:
   7. Cookies set by Cloudflare (cf_clearance, __cf_bm, etc.)
 
 If the profile is poisoned (headless Docker run stored bot-flagged cookies),
-the fix is: rm -rf ~/.casa_tracker_browser
+the fix is: rm -rf ~/.mudate_browser
 """
 import asyncio
 import os
