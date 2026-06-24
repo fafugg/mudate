@@ -1,4 +1,4 @@
-# 🏠 Casa Tracker
+# 🏠 Mudate - home search
 
 Track and compare real estate listings from **Zonaprop** and **Argenprop**.  
 Filter, review, map, and export properties — all from a single self-hosted web app.
@@ -26,8 +26,8 @@ Filter, review, map, and export properties — all from a single self-hosted web
 Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows) or Docker Engine (Linux).
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/casa-tracker.git   # replace YOUR_USERNAME with your fork URL
-cd casa-tracker
+git clone https://github.com/YOUR_USERNAME/mudate.git   # replace YOUR_USERNAME with your fork URL
+cd mudate
 docker compose up
 ```
 
@@ -83,8 +83,8 @@ sudo pacman -S nss atk at-spi2-core cups libdrm libxkbcommon libxcomposite \
 #### 2. Clone and set up the project
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/casa-tracker.git   # replace YOUR_USERNAME with your fork URL
-cd casa-tracker/backend
+git clone https://github.com/YOUR_USERNAME/mudate.git   # replace YOUR_USERNAME with your fork URL
+cd mudate/backend
 
 # Create virtual environment
 python3 -m venv .venv
@@ -110,19 +110,19 @@ To keep the app running after closing the terminal:
 
 ```bash
 # Option A: nohup
-nohup .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 > /tmp/casa-tracker.log 2>&1 &
+nohup .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 > /tmp/mudate.log 2>&1 &
 
 # Option B: systemd user service
 mkdir -p ~/.config/systemd/user
-cat > ~/.config/systemd/user/casa-tracker.service << 'EOF'
+cat > ~/.config/systemd/user/mudate.service << 'EOF'
 [Unit]
 Description=Casa Tracker
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/casa-tracker/backend
-ExecStart=%h/casa-tracker/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+WorkingDirectory=%h/mudate/backend
+ExecStart=%h/mudate/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
 Restart=on-failure
 
 [Install]
@@ -130,7 +130,7 @@ WantedBy=default.target
 EOF
 
 systemctl --user daemon-reload
-systemctl --user enable --now casa-tracker
+systemctl --user enable --now mudate
 ```
 
 #### 5. (Optional) Set environment variables
@@ -178,7 +178,7 @@ OPENCAGE_API_KEY=your_key_here uvicorn main:app --host 0.0.0.0 --port 8000
 ## Project Structure
 
 ```
-casa-tracker/
+mudate/
 ├── backend/
 │   ├── main.py            # FastAPI app + API routes
 │   ├── scrapers/          # Zonaprop and Argenprop scrapers (Playwright)
