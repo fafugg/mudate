@@ -443,14 +443,15 @@
               </td>
               <td class="px-2 py-1.5">
                 <select
-                  :value="h.review || ''"
+                  x-model="h.review"
                   @change="saveReview(h, $event.target.value)"
                   class="text-xs rounded px-1.5 py-1 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 w-28"
                   :class="reviewClass(h.review)">
                   <option value="">A revisar</option>
-                  <template x-for="r in REVIEW_OPTIONS" :key="r.value">
-                    <option :value="r.value" x-text="r.label"></option>
-                  </template>
+                  <option value="en_duda">En duda</option>
+                  <option value="interesante">Interesante</option>
+                  <option value="descartada">Descartada</option>
+                  <option value="contactar">Contactar</option>
                 </select>
               </td>
               <td class="px-3 py-2 text-center">
@@ -505,13 +506,14 @@
              :class="h.status === 'removed' ? 'opacity-50' : ''">
           <!-- Row 1: review + price -->
           <div class="flex items-center justify-between gap-2">
-            <select :value="h.review || ''" @change="saveReview(h, $event.target.value)"
+            <select x-model="h.review" @change="saveReview(h, $event.target.value)"
               class="text-xs rounded px-1.5 py-1 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 w-28"
               :class="reviewClass(h.review)">
               <option value="">A revisar</option>
-              <template x-for="r in REVIEW_OPTIONS" :key="r.value">
-                <option :value="r.value" x-text="r.label"></option>
-              </template>
+              <option value="en_duda">En duda</option>
+              <option value="interesante">Interesante</option>
+              <option value="descartada">Descartada</option>
+              <option value="contactar">Contactar</option>
             </select>
             <div class="text-right">
               <div class="font-bold text-slate-800 text-sm" x-text="formatPrice(h.price, h.currency)"></div>
@@ -828,14 +830,15 @@
         <div class="flex items-center gap-2">
           <span class="text-xs text-slate-400">Revisión:</span>
           <select
-            :value="detailHouse?.review || ''"
+            x-model="detailHouse.review"
             @change="saveReview(detailHouse, $event.target.value)"
             class="text-xs rounded-full px-3 py-1 border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400 font-semibold"
             :class="reviewClass(detailHouse?.review)">
             <option value="">A revisar</option>
-            <template x-for="r in REVIEW_OPTIONS" :key="r.value">
-              <option :value="r.value" x-text="r.label"></option>
-            </template>
+            <option value="en_duda">En duda</option>
+            <option value="interesante">Interesante</option>
+            <option value="descartada">Descartada</option>
+            <option value="contactar">Contactar</option>
           </select>
         </div>
         <div class="flex items-center gap-2">
