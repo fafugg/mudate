@@ -20,16 +20,107 @@
     @media (hover: none) {
       .session-delete-btn { opacity: 1 !important; }
     }
+
+    /* ── Dark mode overrides ── */
+    .dark body,
+    .dark { color-scheme: dark; }
+
+    .dark .bg-slate-50  { background-color: #0f172a !important; }
+    .dark .bg-white     { background-color: #1e293b !important; }
+    .dark .bg-slate-100 { background-color: #334155 !important; }
+    .dark .bg-slate-200 { background-color: #475569 !important; }
+    .dark .bg-blue-50   { background-color: #1e3a5f !important; }
+    .dark .bg-amber-50  { background-color: #422006 !important; }
+    .dark .bg-red-50    { background-color: #450a0a !important; }
+    .dark .bg-green-50  { background-color: #052e16 !important; }
+    .dark .bg-green-100 { background-color: #14532d !important; }
+    .dark .bg-orange-100{ background-color: #431407 !important; }
+    .dark .bg-purple-100{ background-color: #3b0764 !important; }
+    .dark .bg-yellow-100{ background-color: #422006 !important; }
+    .dark .bg-blue-100  { background-color: #1e3a5f !important; }
+    .dark .bg-gray-100  { background-color: #374151 !important; }
+
+    .dark .text-slate-800 { color: #f1f5f9 !important; }
+    .dark .text-slate-700 { color: #e2e8f0 !important; }
+    .dark .text-slate-600 { color: #cbd5e1 !important; }
+    .dark .text-slate-500 { color: #94a3b8 !important; }
+    .dark .text-slate-400 { color: #64748b !important; }
+    .dark .text-slate-300 { color: #94a3b8 !important; }
+    .dark .text-slate-200 { color: #cbd5e1 !important; }
+    .dark .text-slate-100 { color: #e2e8f0 !important; }
+
+    .dark .border-slate-100 { border-color: #334155 !important; }
+    .dark .border-slate-200 { border-color: #334155 !important; }
+    .dark .border-slate-300 { border-color: #475569 !important; }
+    .dark .border-blue-200  { border-color: #1e3a5f !important; }
+    .dark .border-blue-300  { border-color: #1e40af !important; }
+    .dark .border-amber-100 { border-color: #422006 !important; }
+    .dark .border-amber-200 { border-color: #422006 !important; }
+    .dark .border-red-200   { border-color: #450a0a !important; }
+    .dark .border-green-200 { border-color: #052e16 !important; }
+
+    .dark input,
+    .dark select,
+    .dark textarea {
+      background-color: #1e293b !important;
+      color: #e2e8f0 !important;
+      border-color: #475569 !important;
+    }
+    .dark input::placeholder { color: #64748b !important; }
+
+    .dark .shadow-sm  { box-shadow: 0 1px 2px 0 rgba(0,0,0,0.4) !important; }
+    .dark .shadow-lg  { box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5) !important; }
+    .dark .shadow     { box-shadow: 0 1px 3px 0 rgba(0,0,0,0.4) !important; }
+    .dark .shadow-2xl { box-shadow: 0 25px 50px -12px rgba(0,0,0,0.6) !important; }
+
+    .dark th:hover { background: #334155 !important; }
+
+    .dark .bg-purple-100 { background-color: #3b0764 !important; }
+    .dark .text-purple-700 { color: #c084fc !important; }
+    .dark .bg-orange-100 { background-color: #431407 !important; }
+    .dark .text-orange-700 { color: #fb923c !important; }
+
+    .dark tr:hover { background-color: #1e293b !important; }
+    .dark .hover\:bg-slate-50:hover { background-color: #1e293b !important; }
+    .dark .hover\:bg-slate-100:hover { background-color: #334155 !important; }
+    .dark .hover\:bg-slate-200:hover { background-color: #475569 !important; }
+    .dark .hover\:bg-slate-50:hover { background-color: #1e293b !important; }
+
+    .dark .bg-white\/70 { background-color: rgba(15,23,42,0.7) !important; }
+
+    .dark .text-yellow-800 { color: #fbbf24 !important; }
+    .dark .text-blue-800   { color: #60a5fa !important; }
+    .dark .text-orange-800 { color: #fb923c !important; }
+    .dark .text-green-800  { color: #4ade80 !important; }
+    .dark .text-gray-600  { color: #94a3b8 !important; }
+
+    .dark .leaflet-container { background: #0f172a !important; }
+    .dark .leaflet-tile-pane { filter: brightness(0.55) saturate(0.7); }
+    .dark .leaflet-control-attribution { background: rgba(15,23,42,0.8) !important; color: #64748b !important; }
+    .dark .leaflet-control-attribution a { color: #94a3b8 !important; }
   </style>
   <script>
-    tailwind.config = { theme: { extend: {} } }
+    tailwind.config = { darkMode: 'class', theme: { extend: {} } }
   </script>
 </head>
 <body class="bg-slate-50 min-h-screen font-sans text-slate-800" x-data="app()" x-cloak>
 
   <!-- ── LOGIN ── -->
   <div x-show="screen === 'login'" class="flex items-center justify-center min-h-screen p-4">
-    <div class="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm">
+    <div class="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm relative">
+      <button @click="toggleDark()"
+        class="absolute top-4 right-4 p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition dark:hover:text-slate-200 dark:hover:bg-slate-700">
+        <template x-if="!darkMode">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.72 9.72 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" />
+          </svg>
+        </template>
+        <template x-if="darkMode">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" />
+          </svg>
+        </template>
+      </button>
       <div class="text-center mb-6">
         <div class="text-4xl mb-2">🏠</div>
         <h1 class="text-2xl font-bold text-slate-800">Mudate</h1>
@@ -1133,6 +1224,7 @@ function app() {
     _markerMap: {},
     mapMissingCount: 0,
     toastMessage: '',
+    darkMode: false,
     actionsOpen: false,
     sessionsActionsOpen: false,
     showManualAddressModal: false,
@@ -1274,6 +1366,10 @@ function app() {
     },
 
     init() {
+      const saved = localStorage.getItem('darkMode');
+      this.darkMode = saved === 'true';
+      if (this.darkMode) document.documentElement.classList.add('dark');
+
       window.addEventListener('beforeunload', (e) => {
         if (this.screen !== 'login') {
           e.preventDefault();
@@ -1748,6 +1844,12 @@ function app() {
     showToast(msg) {
       this.toastMessage = msg;
       setTimeout(() => { this.toastMessage = ''; }, 2500);
+    },
+
+    toggleDark() {
+      this.darkMode = !this.darkMode;
+      document.documentElement.classList.toggle('dark', this.darkMode);
+      localStorage.setItem('darkMode', this.darkMode);
     },
 
     async saveManualAddress(h, value) {
