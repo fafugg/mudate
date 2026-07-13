@@ -593,37 +593,38 @@
          style="clip-path: inset(0 round 0.75rem)">
       <div id="map" class="w-full h-full"></div>
 
-      <!-- Geocoding progress overlay -->
+      <!-- Geocoding progress card -->
       <div x-show="geocodeStatus?.status === 'running'"
-        class="absolute inset-0 bg-white/85 backdrop-blur-sm flex flex-col items-center justify-center z-[500] gap-3">
-        <svg class="animate-spin h-6 w-6 text-blue-500" fill="none" viewBox="0 0 24 24">
+        class="absolute top-3 right-3 z-[500] bg-white/95 backdrop-blur-sm border border-slate-200 shadow-lg rounded-xl px-4 py-3 flex items-center gap-3 max-w-xs">
+        <svg class="animate-spin h-5 w-5 text-blue-500 shrink-0" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
         </svg>
-        <p class="text-sm font-medium text-slate-600" x-text="geocodeStatus?.message"></p>
-        <div x-show="geocodeStatus?.total > 0" class="w-52">
-          <div class="h-1.5 bg-slate-200 rounded-full">
-            <div class="h-1.5 bg-blue-500 rounded-full transition-all"
-              :style="`width:${Math.round((geocodeStatus.progress/geocodeStatus.total)*100)}%`"></div>
+        <div class="min-w-0 flex-1">
+          <p class="text-sm font-medium text-slate-600 truncate" x-text="geocodeStatus?.message"></p>
+          <div x-show="geocodeStatus?.total > 0" class="mt-1.5">
+            <div class="h-1.5 bg-slate-200 rounded-full">
+              <div class="h-1.5 bg-blue-500 rounded-full transition-all"
+                :style="`width:${Math.round((geocodeStatus.progress/geocodeStatus.total)*100)}%`"></div>
+            </div>
+            <p class="text-xs text-slate-400 mt-0.5"
+              x-text="`${geocodeStatus.progress} / ${geocodeStatus.total}`"></p>
           </div>
-          <p class="text-xs text-slate-400 text-center mt-1"
-            x-text="`${geocodeStatus.progress} / ${geocodeStatus.total}`"></p>
         </div>
         <button @click="skipGeocode()"
-          class="mt-1 text-xs text-slate-500 hover:text-slate-800 border border-slate-300 hover:border-slate-400 bg-white rounded-lg px-4 py-1.5 transition">
-          Saltar y mostrar lo disponible
+          class="text-xs text-slate-500 hover:text-slate-800 border border-slate-300 hover:border-slate-400 bg-white rounded-lg px-3 py-1.5 transition whitespace-nowrap shrink-0">
+          Saltar
         </button>
       </div>
 
       <!-- Missing count warning -->
-      <div x-show="mapMissingCount > 0 && geocodeStatus?.status !== 'running'"
+      <div x-show="mapMissingCount > 0"
         class="absolute top-3 left-14 z-[400] bg-amber-50 border border-amber-200 text-amber-700 text-xs px-3 py-1.5 rounded-lg shadow-sm pointer-events-none"
         x-text="`${mapMissingCount} ${mapMissingCount === 1 ? 'propiedad sin' : 'propiedades sin'} ubicación`">
       </div>
 
       <!-- Fit bounds button -->
       <button @click="fitBounds()"
-        x-show="geocodeStatus?.status !== 'running'"
         class="absolute bottom-4 right-4 z-[400] bg-white shadow border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-blue-600 hover:border-blue-300 transition">
         ⊙ Centrar
       </button>
@@ -1355,19 +1356,27 @@ function app() {
     async pollGeocode(runId) {
       try {
         const res = await fetch(`/api/runs/${runId}`);
-        this.geocodeStatus = await res.json();
-        if (this.geocodeStatus.status !== 'running') {
-          clearInterval(this._geocodePoll);
-          this._geocodePoll = null;
-          this._geocodeRunId = null;
-          if (this.geocodeStatus.status === 'done') {
+        const status = await res.json();
+        const prevProgress = this.geocodeStatus?.progress || 0;
+        this.geocodeStatus = status;
+        if (status.status === 'running') {
+          if (status.progress > prevProgress) {
             const r = await fetch(`/api/users/${this.username}/sessions/${this.currentSession.id}`);
             const d = await r.json();
             this.houses = d.houses || [];
-            this.geocodeStatus = null;
           }
-          if (this.mapView) this.initMap();
+          return;
         }
+        clearInterval(this._geocodePoll);
+        this._geocodePoll = null;
+        this._geocodeRunId = null;
+        if (status.status === 'done') {
+          const r = await fetch(`/api/users/${this.username}/sessions/${this.currentSession.id}`);
+          const d = await r.json();
+          this.houses = d.houses || [];
+          this.geocodeStatus = null;
+        }
+        if (this.mapView) this.initMap();
       } catch (e) {
         clearInterval(this._geocodePoll);
         this._geocodePoll = null;
