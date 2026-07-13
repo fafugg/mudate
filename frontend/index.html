@@ -442,6 +442,10 @@
         <span class="font-semibold text-slate-700" x-text="sessionStats.total"></span>
       </div>
       <div class="flex items-center gap-1.5">
+        <span class="text-slate-400">Mostrando:</span>
+        <span class="font-semibold text-blue-600" x-text="filteredHouses.length"></span>
+      </div>
+      <div class="flex items-center gap-1.5">
         <span class="text-slate-400">Activas:</span>
         <span class="font-semibold text-green-600" x-text="sessionStats.active"></span>
       </div>
@@ -449,6 +453,11 @@
         <span class="text-slate-400">Removidas:</span>
         <span class="font-semibold text-slate-400" x-text="sessionStats.removed"></span>
       </div>
+      <template x-if="priceChangeSummary">
+        <div class="flex items-center gap-1.5">
+          <span class="text-amber-600 font-medium" x-text="priceChangeSummary"></span>
+        </div>
+      </template>
       <template x-if="sessionStats.priceMin != null">
         <div class="flex items-center gap-1.5">
           <span class="text-slate-400">Precio:</span>
@@ -487,14 +496,6 @@
 
     <!-- ── FILTER BAR ── -->
     <div class="bg-white rounded-xl border border-slate-200 px-3 py-2 mb-3 flex flex-wrap items-center gap-2 shadow-sm">
-      <span class="text-xs font-semibold text-slate-600 shrink-0" x-text="`${filteredHouses.length}`"></span>
-      <span class="text-xs text-slate-400 shrink-0">propiedades</span>
-
-      <template x-if="priceChangeSummary">
-        <span class="text-xs text-amber-600 font-medium shrink-0" x-text="priceChangeSummary"></span>
-      </template>
-
-      <div class="w-px h-4 bg-slate-200 shrink-0 mx-1"></div>
 
       <div class="relative" x-data="{ open: false }" @click.away="open = false">
         <button @click="open = !open"
