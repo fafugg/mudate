@@ -126,7 +126,7 @@
     tailwind.config = { darkMode: 'class', theme: { extend: {} } }
   </script>
 </head>
-<body class="bg-slate-50 min-h-screen font-sans text-slate-800" x-data="app()" x-cloak>
+<body class="bg-slate-50 min-h-screen font-sans text-slate-800" :class="{ 'overflow-hidden': compareHouses.length > 0 }" x-data="app()" x-cloak>
 
   <!-- ── LOGIN ── -->
   <div x-show="screen === 'login'" class="flex items-center justify-center min-h-screen p-4">
@@ -569,14 +569,14 @@
           <input x-model="filterRealEstate" @input="tablePage = 1" type="text" placeholder="Inmobiliaria…"
             class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 w-full md:w-36 focus:outline-none focus:ring-2 focus:ring-blue-400" />
 
+          <input x-model="filterNotes" @input="tablePage = 1" type="text" placeholder="Notas…"
+            class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 w-full md:w-28 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+
           <label class="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer shrink-0">
             <input type="checkbox" x-model="filterPriceChange" @change="tablePage = 1"
               class="rounded border-slate-300 text-blue-600 focus:ring-blue-400" />
             <span>Con cambios</span>
           </label>
-
-          <input x-model="filterNotes" @input="tablePage = 1" type="text" placeholder="Notas…"
-            class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 w-full md:w-28 focus:outline-none focus:ring-2 focus:ring-blue-400" />
 
         </div>
 
