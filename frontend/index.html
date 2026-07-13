@@ -146,6 +146,13 @@
               </svg>
               Exportar CSV
             </button>
+            <button @click="copyHouseLinks(); actionsOpen = false"
+              class="w-full text-left text-xs px-4 py-2.5 hover:bg-slate-50 text-slate-700 flex items-center gap-2.5">
+              <svg class="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.046a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364L4.34 8.374" />
+              </svg>
+              Copiar links
+            </button>
             <div class="border-t border-slate-100 my-1"></div>
             <button @click="showManualAddressModal = true; actionsOpen = false"
               class="w-full text-left text-xs px-4 py-2.5 hover:bg-slate-50 text-slate-700 flex items-center gap-2.5">
@@ -1125,6 +1132,7 @@ function app() {
     _mapFocusHouse: null,
     _markerMap: {},
     mapMissingCount: 0,
+    toastMessage: '',
     actionsOpen: false,
     sessionsActionsOpen: false,
     showManualAddressModal: false,
@@ -1728,6 +1736,20 @@ function app() {
       URL.revokeObjectURL(url);
     },
 
+    async copyHouseLinks() {
+      const lines = this.filteredHouses.map((h, i) => {
+        const price = this.formatPrice(h.price, h.currency);
+        return `* #${i + 1} ${price} ${h.url}`;
+      });
+      await navigator.clipboard.writeText(lines.join('\n'));
+      this.showToast('¡Links copiados al portapapeles!');
+    },
+
+    showToast(msg) {
+      this.toastMessage = msg;
+      setTimeout(() => { this.toastMessage = ''; }, 2500);
+    },
+
     async saveManualAddress(h, value) {
       const trimmed = value.trim();
       const effective = h.manual_address || h.address || '';
@@ -1972,5 +1994,10 @@ function app() {
   };
 }
 </script>
+  <!-- Toast notification -->
+  <div x-show="toastMessage" x-cloak x-transition
+    class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[3000] bg-slate-800 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg">
+    <span x-text="toastMessage"></span>
+  </div>
 </body>
 </html>
