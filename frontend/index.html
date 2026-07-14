@@ -1652,6 +1652,11 @@ function app() {
       ['filterStatus', 'filterType', 'filterReview', 'filterMaxPrice', 'filterAddress', 'filterRealEstate', 'houses'].forEach(k => {
         this.$watch(k, redraw);
       });
+      this.$watch('showManualAddressModal', (val, old) => {
+        if (!val && old && this.mapView && this._map) {
+          this.$nextTick(() => this._map.invalidateSize({ animate: false }));
+        }
+      });
     },
 
     async setView(view) {
