@@ -866,7 +866,8 @@
 
       <!-- Missing count warning -->
       <div x-show="mapMissingCount > 0"
-        class="absolute top-3 left-14 z-[400] bg-amber-50 border border-amber-200 text-amber-700 text-xs px-3 py-1.5 rounded-lg shadow-sm pointer-events-none"
+        @click="showManualAddressModal = true"
+        class="absolute top-3 left-14 z-[400] bg-amber-50 border border-amber-200 text-amber-700 text-xs px-3 py-1.5 rounded-lg shadow-sm cursor-pointer hover:bg-amber-100 transition"
         x-text="`${mapMissingCount} ${mapMissingCount === 1 ? 'propiedad sin' : 'propiedades sin'} ubicación`">
       </div>
 
