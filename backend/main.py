@@ -42,7 +42,7 @@ async def startup():
 @app.get("/api/users/{username}")
 async def get_user(username: str) -> dict:
     """Devuelve los datos del usuario y sus sesiones ordenadas por última ejecución."""
-    _validate_username(username)
+    username = _validate_username(username)
     db = read_db()
     is_new = username not in db["users"]
     user_data = db["users"].get(username, {"sessions": {}})
@@ -69,7 +69,7 @@ class CreateSessionBody(BaseModel):
 @app.post("/api/users/{username}/sessions", status_code=201)
 async def create_session(username: str, body: CreateSessionBody) -> dict:
     """Crea una nueva sesión de búsqueda para el usuario."""
-    _validate_username(username)
+    username = _validate_username(username)
     if body.search_engine not in ("zonaprop", "argenprop", "mercadolibre", "remax"):
         raise HTTPException(400, "search_engine must be 'zonaprop', 'argenprop', 'mercadolibre', or 'remax'")
 
@@ -96,6 +96,7 @@ async def create_session(username: str, body: CreateSessionBody) -> dict:
 @app.get("/api/users/{username}/sessions/{session_id}")
 async def get_session(username: str, session_id: str) -> dict:
     """Devuelve una sesión con sus propiedades asociadas."""
+    username = username.lower()
     db = read_db()
     session = _session_or_404(db, username, session_id)
     houses = [db["houses"][hid] for hid in session["house_ids"] if hid in db["houses"]]
@@ -110,6 +111,7 @@ class UpdateSessionBody(BaseModel):
 @app.delete("/api/users/{username}/sessions/{session_id}")
 async def delete_session(username: str, session_id: str) -> dict:
     """Elimina una sesión y todas sus propiedades asociadas."""
+    username = username.lower()
     def update(db: dict):
         session = _session_or_404(db, username, session_id)
         for hid in session.get("house_ids", []):
@@ -122,6 +124,7 @@ async def delete_session(username: str, session_id: str) -> dict:
 @app.put("/api/users/{username}/sessions/{session_id}")
 async def update_session(username: str, session_id: str, body: UpdateSessionBody) -> dict:
     """Actualiza el filtro de búsqueda o etiqueta de una sesión."""
+    username = username.lower()
     def update(db: dict):
         session = _session_or_404(db, username, session_id)
         if body.search_filter is not None:
@@ -138,6 +141,7 @@ async def run_session(
     username: str, session_id: str, background_tasks: BackgroundTasks
 ) -> dict:
     """Lanza un scraping en background para la sesión indicada."""
+    username = username.lower()
     db = read_db()
     session = _session_or_404(db, username, session_id)
 
@@ -242,6 +246,7 @@ async def geocode_session(
     force: bool = False,
 ) -> dict:
     """Lanza la geocodificación en background para todas las propiedades de la sesión."""
+    username = username.lower()
     db = read_db()
     session = _session_or_404(db, username, session_id)
 
@@ -400,6 +405,7 @@ async def import_db(file: UploadFile = File(...)) -> dict:
 @app.delete("/api/users/{username}/sessions/{session_id}/geodata")
 async def clear_geodata(username: str, session_id: str) -> dict:
     """Borra las coordenadas geográficas de todas las propiedades de la sesión."""
+    username = username.lower()
     def update(db: dict):
         session = _session_or_404(db, username, session_id)
         for hid in session.get("house_ids", []):
@@ -434,11 +440,13 @@ def _prune_runs(runs: dict, max_age_hours: int = 24) -> None:
     for rid in stale:
         del runs[rid]
 
-def _validate_username(username: str) -> None:
+def _validate_username(username: str) -> str:
+    username = username.lower()
     if not re.match(r"^[a-zA-Z0-9_-]{1,32}$", username):
         raise HTTPException(
             400, "Username can only contain letters, numbers, _ and - (max 32 chars)"
         )
+    return username
 
 
 def _session_or_404(db: dict, username: str, session_id: str) -> dict:
