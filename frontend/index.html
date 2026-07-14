@@ -889,7 +889,8 @@
   </div>
 
   <!-- ── HOUSE DETAIL MODAL ── -->
-  <div x-show="detailHouse" @click.self="closeDetail()"
+  <div x-show="detailHouse" x-effect="document.body.style.overflow = detailHouse ? 'hidden' : ''"
+    @click.self="closeDetail()"
     @keydown.escape.window="if (detailHouse && !lightboxImg) closeDetail()"
     @keydown.arrow-up.window="if (!editingModalAddress) { $event.preventDefault(); navigateDetail(-1); }"
     @keydown.arrow-down.window="if (!editingModalAddress) { $event.preventDefault(); navigateDetail(1); }"
@@ -1807,6 +1808,7 @@ function app() {
       }
       this.detailHouse = null;
       this.editingModalAddress = false;
+      document.body.style.overflow = '';
     },
 
     openLightbox(images, idx) {
