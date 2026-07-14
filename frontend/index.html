@@ -889,6 +889,11 @@
     </div>
   </div>
 
+  <!-- ── MODALS ──
+       All modals must include: x-effect="document.body.style.overflow = <trigger> ? 'hidden' : ''"
+       This locks background scroll when the modal is open.
+       ─────────────────────────────────────────────────── -->
+
   <!-- ── HOUSE DETAIL MODAL ── -->
   <div x-show="detailHouse" x-effect="document.body.style.overflow = detailHouse ? 'hidden' : ''"
     @click.self="closeDetail()"
@@ -1141,7 +1146,8 @@
   </div>
 
   <!-- ── LIGHTBOX ── -->
-  <div x-show="lightboxImg" @click.self="lightboxImg = null"
+  <div x-show="lightboxImg" x-effect="document.body.style.overflow = lightboxImg ? 'hidden' : ''"
+    @click.self="lightboxImg = null"
     @keydown.escape.window="lightboxImg = null"
     @keydown.arrow-left.window="if (!editingModalAddress) lightboxPrev()"
     @keydown.arrow-right.window="if (!editingModalAddress) lightboxNext()"
@@ -1159,7 +1165,7 @@
   </div>
 
   <!-- ── NEW SEARCH MODAL ── -->
-  <div x-show="showNewForm" x-cloak
+  <div x-show="showNewForm" x-cloak x-effect="document.body.style.overflow = showNewForm ? 'hidden' : ''"
     @click.self="showNewForm = false; newFilter = ''; newLabel = ''; newEngine = ''"
     class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[1400] p-4">
     <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
@@ -1207,7 +1213,7 @@
   </div>
 
   <!-- ── MANUAL ADDRESS MODAL ── -->
-  <div x-show="showManualAddressModal" x-cloak
+  <div x-show="showManualAddressModal" x-cloak x-effect="document.body.style.overflow = showManualAddressModal ? 'hidden' : ''"
     @click.self="showManualAddressModal = false"
     @keydown.escape.window="showManualAddressModal = false"
     class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[1400] p-4">
@@ -2461,7 +2467,7 @@ function app() {
   </div>
 
   <!-- Keyboard shortcuts modal -->
-  <div x-show="showShortcuts" x-cloak x-transition.opacity
+  <div x-show="showShortcuts" x-cloak x-transition.opacity x-effect="document.body.style.overflow = showShortcuts ? 'hidden' : ''"
     class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[3500] p-4"
     @click.self="showShortcuts = false" @keydown.escape.window="showShortcuts = false">
     <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-sm p-6">
@@ -2562,7 +2568,7 @@ function app() {
   </div>
 
   <!-- Confirmation modal -->
-  <div x-show="confirmModal.show" x-cloak x-transition.opacity
+  <div x-show="confirmModal.show" x-cloak x-transition.opacity x-effect="document.body.style.overflow = confirmModal.show ? 'hidden' : ''"
     class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[3500] p-4"
     @click.self="cancelConfirm()">
     <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-sm p-6">
