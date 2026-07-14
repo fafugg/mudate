@@ -70,8 +70,8 @@ class CreateSessionBody(BaseModel):
 async def create_session(username: str, body: CreateSessionBody) -> dict:
     """Crea una nueva sesión de búsqueda para el usuario."""
     _validate_username(username)
-    if body.search_engine not in ("zonaprop", "argenprop"):
-        raise HTTPException(400, "search_engine must be 'zonaprop' or 'argenprop'")
+    if body.search_engine not in ("zonaprop", "argenprop", "mercadolibre", "remax"):
+        raise HTTPException(400, "search_engine must be 'zonaprop', 'argenprop', 'mercadolibre', or 'remax'")
 
     session_id = str(uuid.uuid4())
     now = _now()

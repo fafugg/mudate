@@ -8,10 +8,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <style>
     [x-cloak] { display: none !important; }
     .table-wrap { overflow-x: auto; }
@@ -38,6 +35,8 @@
     .dark .bg-green-50  { background-color: #052e16 !important; }
     .dark .bg-green-100 { background-color: #14532d !important; }
     .dark .bg-orange-100{ background-color: #431407 !important; }
+    .dark .bg-yellow-100{ background-color: #422006 !important; }
+    .dark .bg-blue-100{ background-color: #1e3a5f !important; }
     .dark .bg-purple-100{ background-color: #3b0764 !important; }
     .dark .bg-yellow-100{ background-color: #422006 !important; }
     .dark .bg-blue-100  { background-color: #1e3a5f !important; }
@@ -83,6 +82,8 @@
     .dark .bg-purple-100 { background-color: #3b0764 !important; }
     .dark .text-purple-700 { color: #c084fc !important; }
     .dark .bg-orange-100 { background-color: #431407 !important; }
+    .dark .bg-yellow-100 { background-color: #422006 !important; }
+    .dark .bg-blue-100 { background-color: #1e3a5f !important; }
     .dark .text-orange-700 { color: #fb923c !important; }
 
     .dark tr:hover { background-color: #1e293b !important; }
@@ -208,8 +209,8 @@
               @blur="saveLabel()" @keydown.enter="$event.target.blur()" @keydown.escape="editingLabel = false"
               class="text-sm font-semibold text-slate-700 bg-white border border-blue-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-0 max-w-[200px]" />
             <span x-show="currentSession" class="shrink-0 px-1.5 py-0.5 rounded-full font-medium leading-none"
-              :class="currentSession?.search_engine === 'zonaprop' ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700'"
-              x-text="currentSession?.search_engine === 'zonaprop' ? 'Zonaprop' : 'Argenprop'"></span>
+              :class="{'bg-purple-100 text-purple-700': currentSession?.search_engine === 'zonaprop', 'bg-orange-100 text-orange-700': currentSession?.search_engine === 'argenprop', 'bg-yellow-100 text-yellow-700': currentSession?.search_engine === 'mercadolibre', 'bg-blue-100 text-blue-700': currentSession?.search_engine === 'remax'}"
+              x-text="({zonaprop:'Zonaprop',argenprop:'Argenprop',mercadolibre:'MercadoLibre',remax:'Remax'})[currentSession?.search_engine] || currentSession?.search_engine"></span>
           </div>
         </template>
       </div>
@@ -318,7 +319,7 @@
 
   <!-- ── SESSIONS LIST ── -->
   <div x-show="screen === 'sessions'" class="max-w-2xl mx-auto px-3 sm:px-4 py-6 sm:py-8"
-    @keydown.escape.window="if (showNewForm) { showNewForm = false; newFilter = ''; newLabel = ''; newEngine = 'zonaprop'; }">
+    @keydown.escape.window="if (showNewForm) { showNewForm = false; newFilter = ''; newLabel = ''; newEngine = ''; }">
 
     <!-- New session button -->
     <button @click="showNewForm = true"
@@ -344,8 +345,8 @@
               <div class="flex items-center gap-2 mb-1">
                 <span class="text-sm font-semibold text-slate-800 truncate" x-text="s.label"></span>
                 <span class="text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
-                  :class="s.search_engine === 'zonaprop' ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700'"
-                  x-text="s.search_engine === 'zonaprop' ? 'Zonaprop' : 'Argenprop'"></span>
+                  :class="{'bg-purple-100 text-purple-700': s.search_engine === 'zonaprop', 'bg-orange-100 text-orange-700': s.search_engine === 'argenprop', 'bg-yellow-100 text-yellow-700': s.search_engine === 'mercadolibre', 'bg-blue-100 text-blue-700': s.search_engine === 'remax'}"
+                  x-text="({zonaprop:'Zonaprop',argenprop:'Argenprop',mercadolibre:'MercadoLibre',remax:'Remax'})[s.search_engine] || s.search_engine"></span>
               </div>
               <p class="text-xs text-slate-500">
                 <span x-text="s.active_count || 0"></span> propiedades activas
@@ -901,7 +902,7 @@
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2 mb-1 flex-wrap">
               <span class="text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-medium"
-                x-text="detailHouse?.search_engine === 'zonaprop' ? 'Zonaprop' : 'Argenprop'"></span>
+                x-text="({zonaprop:'Zonaprop',argenprop:'Argenprop',mercadolibre:'MercadoLibre',remax:'Remax'})[detailHouse?.search_engine] || detailHouse?.search_engine"></span>
               <span x-show="detailHouse?.type" class="text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-medium"
                 x-text="detailHouse?.type"></span>
             </div>
@@ -1112,7 +1113,7 @@
           </button>
           <a x-show="detailHouse?.url" :href="detailHouse?.url" target="_blank"
             class="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-lg transition">
-            Ver en <span x-text="detailHouse?.search_engine === 'zonaprop' ? 'Zonaprop' : 'Argenprop'"></span>
+            Ver en <span x-text="({zonaprop:'Zonaprop',argenprop:'Argenprop',mercadolibre:'MercadoLibre',remax:'Remax'})[detailHouse?.search_engine] || detailHouse?.search_engine"></span>
             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
             </svg>
@@ -1152,28 +1153,15 @@
 
   <!-- ── NEW SEARCH MODAL ── -->
   <div x-show="showNewForm" x-cloak
-    @click.self="showNewForm = false; newFilter = ''; newLabel = ''; newEngine = 'zonaprop'"
+    @click.self="showNewForm = false; newFilter = ''; newLabel = ''; newEngine = ''"
     class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[1400] p-4">
     <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
       <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
         <h2 class="font-bold text-slate-800 text-base">Nueva búsqueda</h2>
-        <button @click="showNewForm = false; newFilter = ''; newLabel = ''; newEngine = 'zonaprop'"
+        <button @click="showNewForm = false; newFilter = ''; newLabel = ''; newEngine = ''"
           class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
       </div>
       <div class="px-6 py-5 space-y-4">
-        <div>
-          <label class="text-sm font-medium text-slate-600 block mb-2">Buscador</label>
-          <div class="flex gap-4">
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input type="radio" x-model="newEngine" value="zonaprop" />
-              <span class="text-sm">Zonaprop</span>
-            </label>
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input type="radio" x-model="newEngine" value="argenprop" />
-              <span class="text-sm">Argenprop</span>
-            </label>
-          </div>
-        </div>
         <div>
           <label class="text-sm font-medium text-slate-600 block mb-1">Nombre <span class="font-normal text-slate-400">(opcional)</span></label>
           <input x-model="newLabel" type="text" placeholder="ej: GBA Norte - hasta USD 350k"
@@ -1183,19 +1171,27 @@
         <div>
           <label class="text-sm font-medium text-slate-600 block mb-1">Filtro URL</label>
           <input x-model="newFilter" type="text" placeholder="/inmuebles-venta-gba-norte..."
+            @input="parseFilterUrl()"
             @keydown.enter="createSession"
             class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono" />
-          <p class="text-xs text-slate-400 mt-1.5">
-            URL completa: <span class="font-mono text-blue-600 break-all" x-text="previewUrl()"></span>
-          </p>
+          <div class="mt-1.5 space-y-1">
+            <span x-show="newEngine" x-cloak
+              class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium w-fit"
+              :class="{'bg-purple-100 text-purple-700': newEngine==='zonaprop', 'bg-orange-100 text-orange-700': newEngine==='argenprop', 'bg-yellow-100 text-yellow-700': newEngine==='mercadolibre', 'bg-blue-100 text-blue-700': newEngine==='remax'}"
+              x-text="engineLabel(newEngine)">
+            </span>
+            <p class="text-xs text-slate-400">
+              URL completa: <span class="font-mono text-blue-600 break-all" x-text="previewUrl()"></span>
+            </p>
+          </div>
         </div>
       </div>
       <div class="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
-        <button @click="showNewForm = false; newFilter = ''; newLabel = ''; newEngine = 'zonaprop'"
+        <button @click="showNewForm = false; newFilter = ''; newLabel = ''; newEngine = ''"
           class="text-sm text-slate-500 hover:text-slate-700 px-4 py-2 rounded-lg transition">
           Cancelar
         </button>
-        <button @click="createSession" :disabled="!newFilter"
+        <button @click="createSession" :disabled="!newFilter || !newEngine"
           class="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-sm font-semibold px-5 py-2 rounded-lg transition">
           Buscar
         </button>
@@ -1333,7 +1329,7 @@ function app() {
     loading: false,
     loadingMsg: '',
     showNewForm: false,
-    newEngine: 'zonaprop',
+    newEngine: '',
     newFilter: '',
     newLabel: '',
     editingFilter: false,
@@ -1366,6 +1362,8 @@ function app() {
     mapView: false,
     _map: null,
     _markerLayer: null,
+    _mapUserMoved: false,
+    _redrawTimer: null,
     geocodeStatus: null,
     _geocodePoll: null,
     _geocodeRunId: null,
@@ -1589,7 +1587,12 @@ function app() {
       // visualViewport fires on mobile when the browser toolbar appears/disappears
       window.visualViewport?.addEventListener('resize', onResize);
 
-      const redraw = () => { if (this.mapView && this._map) this.renderPins(); };
+      const redraw = () => {
+        clearTimeout(this._redrawTimer);
+        this._redrawTimer = setTimeout(() => {
+          if (this.mapView && this._map) this.renderPins();
+        }, 200);
+      };
       ['filterStatus', 'filterType', 'filterReview', 'filterMaxPrice', 'filterAddress', 'filterRealEstate', 'houses'].forEach(k => {
         this.$watch(k, redraw);
       });
@@ -1698,6 +1701,7 @@ function app() {
         attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
         maxZoom: 19,
       }).addTo(this._map);
+      this._map.on('moveend zoomend', () => { this._mapUserMoved = true; });
       // Single deferred invalidate — gives the browser one frame to fully
       // commit the container height before Leaflet measures it.
       requestAnimationFrame(() => {
@@ -1709,12 +1713,7 @@ function app() {
     renderPins() {
       if (!this._map) return;
       if (!this._markerLayer) {
-        this._markerLayer = L.markerClusterGroup({
-          maxClusterRadius: 50,
-          spiderfyOnMaxZoom: true,
-          showCoverageOnHover: false,
-          zoomToBoundsOnClick: true,
-        }).addTo(this._map);
+        this._markerLayer = L.layerGroup().addTo(this._map);
       } else {
         this._markerLayer.clearLayers();
       }
@@ -1738,7 +1737,7 @@ function app() {
         this._markerLayer.addLayer(marker);
         this._markerMap[h.internal_id] = marker;
       });
-      if (placed.length > 0) this.fitBounds();
+      if (placed.length > 0 && !this._mapUserMoved) this.fitBounds();
 
       if (this._mapFocusHouse) {
         const fh = this._mapFocusHouse;
@@ -1760,6 +1759,7 @@ function app() {
 
     fitBounds() {
       if (!this._map || !this._markerLayer) return;
+      this._mapUserMoved = false;
       const layers = this._markerLayer.getLayers();
       if (layers.length > 0) {
         this._map.fitBounds(L.featureGroup(layers).getBounds().pad(0.35), { maxZoom: 14 });
@@ -1836,8 +1836,46 @@ function app() {
 
     previewUrl() {
       if (!this.newFilter) return '—';
-      const base = this.newEngine === 'zonaprop' ? 'https://www.zonaprop.com.ar' : 'https://www.argenprop.com';
-      return base + (this.newFilter.startsWith('/') ? '' : '/') + this.newFilter;
+      const bases = {
+        zonaprop: 'https://www.zonaprop.com.ar',
+        argenprop: 'https://www.argenprop.com',
+        mercadolibre: 'https://inmuebles.mercadolibre.com.ar',
+        remax: 'https://www.remax.com.ar/listings/buy',
+      };
+      const base = bases[this.newEngine] || bases.zonaprop;
+      const sep = this.newFilter.startsWith('/') || this.newFilter.startsWith('?') ? '' : '/';
+      return base + sep + this.newFilter;
+    },
+
+    engineLabel(engine) {
+      return { zonaprop: 'Zonaprop', argenprop: 'Argenprop', mercadolibre: 'MercadoLibre', remax: 'Remax' }[engine] || '';
+    },
+
+    parseFilterUrl() {
+      const val = this.newFilter.trim();
+      if (!val.startsWith('http')) {
+        this.newEngine = '';
+        return;
+      }
+      try {
+        const u = new URL(val);
+        const host = u.hostname.toLowerCase();
+        if (host.includes('zonaprop.com.ar')) {
+          this.newEngine = 'zonaprop';
+          this.newFilter = u.pathname + u.search;
+        } else if (host.includes('argenprop.com')) {
+          this.newEngine = 'argenprop';
+          this.newFilter = u.pathname + u.search;
+        } else if (host.includes('mercadolibre.com.ar') || host.includes('inmuebles.mercadolibre')) {
+          this.newEngine = 'mercadolibre';
+          this.newFilter = u.pathname + u.search;
+        } else if (host.includes('remax.com.ar')) {
+          this.newEngine = 'remax';
+          // For Remax, extract everything after /listings/buy
+          const match = u.pathname.match(/\/listings\/buy(.*)/);
+          this.newFilter = (match ? match[1] : u.pathname) + u.search + u.hash;
+        }
+      } catch (e) { /* not a valid URL, ignore */ }
     },
 
     logout() {

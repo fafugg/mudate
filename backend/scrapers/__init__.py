@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional
 from storage import atomic_update, _now, read_db
 
 from .argenprop import ArgenpropScraper
+from .mercadolibre import MercadoLibreScraper
+from .remax import RemaxScraper
 from .zonaprop import ZonapropScraper
 
 
@@ -12,6 +14,10 @@ def get_scraper(engine: str):
         return ZonapropScraper()
     if engine == "argenprop":
         return ArgenpropScraper()
+    if engine == "mercadolibre":
+        return MercadoLibreScraper()
+    if engine == "remax":
+        return RemaxScraper()
     raise ValueError(f"Unknown engine: {engine}")
 
 
@@ -224,7 +230,7 @@ def _merge(house: dict, listing: dict, now: str) -> None:
         "price_per_m2", "expenses", "expenses_currency", "address",
         "covered_m2", "total_m2", "floor", "parking", "amenities",
         "orientation", "age_years", "condition", "real_estate", "real_estate_phone",
-        "published_at", "images", "description",
+        "published_at", "images", "description", "lat", "lng",
     ]
     for field in updatable:
         if listing.get(field) is not None:
@@ -271,8 +277,8 @@ def _new_house(hid: str, listing: dict, session_id: str, engine: str, now: str) 
         "review": None,
         "notes": None,
         "manual_address": None,
-        "lat": None,
-        "lng": None,
+        "lat": listing.get("lat"),
+        "lng": listing.get("lng"),
         "geocode_failed": False,
     }
 
