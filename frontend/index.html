@@ -546,20 +546,56 @@
              Always transparent on desktop (md:contents, md:order-none). -->
         <div :class="filtersOpen ? 'w-full grid grid-cols-2 gap-2 order-3 md:order-none md:contents' : 'hidden md:contents'">
 
-          <select x-model="filterType" @change="tablePage = 1"
-            class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white text-slate-700 w-full md:w-auto">
-            <option value="all">Tipo: todos</option>
-            <template x-for="t in propertyTypes" :key="t">
-              <option :value="t" x-text="t"></option>
-            </template>
-          </select>
+          <div class="relative" x-data="{ open: false }" @click.away="open = false">
+            <button @click="open = !open"
+              class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-blue-400">
+              <span>Tipo</span>
+              <span x-show="filterType.length > 0"
+                class="bg-blue-500 text-white rounded-full text-[10px] px-1.5 py-0.5 leading-none"
+                x-text="filterType.length"></span>
+              <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+              </svg>
+            </button>
+            <div x-show="open" x-transition
+              class="absolute left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 py-1 min-w-[160px] max-h-60 overflow-y-auto">
+              <template x-for="t in propertyTypes" :key="t">
+                <label class="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 cursor-pointer">
+                  <input type="checkbox" :checked="filterType.includes(t)"
+                    @change="toggleFilterType(t)"
+                    class="rounded border-slate-300 text-blue-600 focus:ring-blue-400">
+                  <span class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800" x-text="t"></span>
+                </label>
+              </template>
+            </div>
+          </div>
 
-          <select x-model="filterStatus" @change="tablePage = 1"
-            class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white text-slate-700 w-full md:w-auto">
-            <option value="active">Activas</option>
-            <option value="all">Todas</option>
-            <option value="removed">Removidas</option>
-          </select>
+          <div class="relative" x-data="{ open: false }" @click.away="open = false">
+            <button @click="open = !open"
+              class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-blue-400">
+              <span>Estado</span>
+              <span x-show="filterStatus.length > 0"
+                class="bg-blue-500 text-white rounded-full text-[10px] px-1.5 py-0.5 leading-none"
+                x-text="filterStatus.length"></span>
+              <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+              </svg>
+            </button>
+            <div x-show="open" x-transition
+              class="absolute left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 py-1 min-w-[160px]">
+              <template x-for="s in STATUS_OPTIONS" :key="s.value">
+                <label class="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 cursor-pointer">
+                  <input type="checkbox" :checked="filterStatus.includes(s.value)"
+                    @change="toggleFilterStatus(s.value)"
+                    class="rounded border-slate-300 text-blue-600 focus:ring-blue-400">
+                  <span :class="s.cls" class="px-1.5 py-0.5 rounded" x-text="s.label"></span>
+                </label>
+              </template>
+            </div>
+          </div>
+
+          <input x-model="filterMinPrice" @input="tablePage = 1" type="number" placeholder="Precio mín."
+            class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 w-full md:w-28 focus:outline-none focus:ring-2 focus:ring-blue-400" />
 
           <input x-model="filterMaxPrice" @input="tablePage = 1" type="number" placeholder="Precio máx."
             class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 w-full md:w-28 focus:outline-none focus:ring-2 focus:ring-blue-400" />
@@ -1332,6 +1368,11 @@ const REVIEW_OPTIONS = [
   { value: 'contactar',   label: 'Contactar',    cls: 'bg-green-100 text-green-800' },
 ];
 
+const STATUS_OPTIONS = [
+  { value: 'active',  label: 'Activas',   cls: 'bg-green-100 text-green-800' },
+  { value: 'removed', label: 'Removidas', cls: 'bg-red-100 text-red-800' },
+];
+
 function app() {
   return {
     screen: 'login',
@@ -1352,9 +1393,9 @@ function app() {
     runStatus: null,
     runDismissed: false,
     _pollInterval: null,
-    filterStatus: 'active',
-    filterType: 'all',
-    filterReview: [],
+    filterStatus: [],
+    filterType: [],
+    filterMinPrice: '',
     filterMaxPrice: '',
     filterAddress: '',
     filterRealEstate: '',
@@ -1424,8 +1465,9 @@ function app() {
     // Count of active extra filters (everything except filterReview)
     get activeExtraFilters() {
       return [
-        this.filterType    !== 'all',
-        this.filterStatus  !== 'active',
+        this.filterType.length > 0,
+        this.filterStatus.length > 0,
+        !!this.filterMinPrice,
         !!this.filterMaxPrice,
         !!this.filterAddress,
         !!this.filterRealEstate,
@@ -1439,11 +1481,12 @@ function app() {
 
     get filteredHouses() {
       let list = [...this.houses];
-      if (this.filterStatus !== 'all') list = list.filter(h => h.status === this.filterStatus);
-      if (this.filterType !== 'all') list = list.filter(h => h.type === this.filterType);
+      if (this.filterStatus.length > 0) list = list.filter(h => this.filterStatus.includes(h.status));
+      if (this.filterType.length > 0) list = list.filter(h => this.filterType.includes(h.type));
       if (this.filterReview.length > 0 && this.filterReview.length < REVIEW_OPTIONS.length) {
         list = list.filter(h => this.filterReview.includes(h.review || ''));
       }
+      if (this.filterMinPrice) list = list.filter(h => h.price && h.price >= parseFloat(this.filterMinPrice));
       if (this.filterMaxPrice) list = list.filter(h => !h.price || h.price <= parseFloat(this.filterMaxPrice));
       if (this.filterAddress) {
         const q = this._norm(this.filterAddress);
@@ -1914,8 +1957,9 @@ function app() {
     async goBack() {
       this.stopGeocoding();
       this.filterReview = [];
-      this.filterType = 'all';
-      this.filterStatus = 'active';
+      this.filterType = [];
+      this.filterStatus = [];
+      this.filterMinPrice = '';
       this.filterMaxPrice = '';
       this.filterAddress = '';
       this.filterRealEstate = '';
@@ -1995,9 +2039,10 @@ function app() {
         }
         this.tablePage = 1;
         this.filterReview = [];
-        this.filterType = 'all';
-        this.filterStatus = 'active';
-        this.filterMaxPrice = '';
+        this.filterType = [];
+        this.filterStatus = [];
+        this.filterMinPrice = '';
+      this.filterMaxPrice = '';
         this.filterAddress = '';
         this.filterRealEstate = '';
         this.filtersOpen = false;
@@ -2350,6 +2395,20 @@ function app() {
       const i = this.filterReview.indexOf(val);
       if (i !== -1) this.filterReview = this.filterReview.filter(v => v !== val);
       else this.filterReview = [...this.filterReview, val];
+      this.tablePage = 1;
+    },
+
+    toggleFilterType(val) {
+      const i = this.filterType.indexOf(val);
+      if (i !== -1) this.filterType = this.filterType.filter(v => v !== val);
+      else this.filterType = [...this.filterType, val];
+      this.tablePage = 1;
+    },
+
+    toggleFilterStatus(val) {
+      const i = this.filterStatus.indexOf(val);
+      if (i !== -1) this.filterStatus = this.filterStatus.filter(v => v !== val);
+      else this.filterStatus = [...this.filterStatus, val];
       this.tablePage = 1;
     },
 
