@@ -909,7 +909,7 @@
             <!-- Address display / inline edit -->
             <div class="flex items-start gap-2 group/addr">
               <h2 x-show="!editingModalAddress"
-                class="text-white font-bold text-base leading-snug flex-1 line-clamp-2 min-h-[2.75rem]">
+                class="text-white font-bold text-sm md:text-base leading-snug flex-1 line-clamp-2 min-h-[2.75rem]">
                 <span x-text="(detailHouse?.manual_address || detailHouse?.address) || 'Sin dirección'"></span>
                 <span x-show="detailHouse?.manual_address"
                   class="ml-1.5 text-xs font-normal text-white/60">(manual)</span>
