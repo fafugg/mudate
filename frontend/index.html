@@ -497,7 +497,7 @@
     </div>
 
     <!-- ── FILTER BAR ── -->
-    <div class="bg-white rounded-xl border border-slate-200 px-3 py-2 mb-3 flex items-center gap-2 shadow-sm whitespace-nowrap relative z-20">
+    <div class="bg-white rounded-xl border border-slate-200 px-3 py-2 mb-3 flex flex-wrap items-center gap-2 shadow-sm relative z-20">
 
       <!-- Revisión dropdown -->
       <div class="relative shrink-0" x-data="{ open: false }" @click.away="open = false">
@@ -611,48 +611,53 @@
 
       </div>
 
-      <!-- Columnas dropdown -->
-      <div x-show="!mapView" class="relative shrink-0 hidden md:block md:ml-auto" x-data="{ columnsOpen: false }" @click.away="columnsOpen = false">
-        <button @click="columnsOpen = !columnsOpen"
-          class="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white transition whitespace-nowrap">
-          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-1.5A1.125 1.125 0 0118 18.375M20.625 4.5H3.375m17.25 0c.621 0 1.125.504 1.125 1.125M20.625 4.5h-1.5C18.504 4.5 18 5.004 18 5.625m3.75 0v1.5c0 .621-.504 1.125-1.125 1.125M3.375 4.5c-.621 0-1.125.504-1.125 1.125M3.375 4.5h1.5C5.496 4.5 6 5.004 6 5.625m-3.75 0v1.5c0 .621.504 1.125 1.125 1.125m0 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m1.5-3.75C5.496 8.25 6 7.746 6 7.125v-1.5M4.875 8.25C5.496 8.25 6 8.754 6 9.375v1.5m0-5.25v5.25m0-5.25C6 5.004 6.504 4.5 7.125 4.5h9.75c.621 0 1.125.504 1.125 1.125m1.125 2.625h1.5m-1.5 0A1.125 1.125 0 0118 7.125v-1.5m1.125 2.625c-.621 0-1.125.504-1.125 1.125v1.5m2.625-2.625c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125M18 5.625v5.25M7.125 12h9.75m-9.75 0A1.125 1.125 0 016 10.875M7.125 12C6.504 12 6 12.504 6 13.125m0-2.25C6 11.496 5.496 12 4.875 12M18 10.875c0 .621-.504 1.125-1.125 1.125M18 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m-12 5.25v-5.25m0 5.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125m-12 0v-1.5c0-.621-.504-1.125-1.125-1.125M18 18.375v-5.25m0 5.25v-1.5c0-.621.504-1.125 1.125-1.125M18 13.125v1.5c0 .621.504 1.125 1.125 1.125M18 13.125c0-.621.504-1.125 1.125-1.125M6 13.125v1.5c0 .621-.504 1.125-1.125 1.125M6 13.125C6 12.504 5.496 12 4.875 12m-1.5 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m1.5-3.75C5.496 12 6 12.504 6 13.125"/>
-          <span class="hidden md:inline">Columnas</span>
-          <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-          </svg>
-        </button>
-        <div x-show="columnsOpen" x-cloak
-          class="absolute top-full right-0 mt-1 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg z-50 py-1">
-          <template x-for="[key, label] in [['status','Estado'],['review','Revisión'],['id','ID'],['type','Tipo'],['address','Dirección'],['price','Precio'],['m2','$/m²'],['amb','Ambientes'],['dorm','Dormitorios'],['expenses','Expensas'],['realEstate','Inmobiliaria'],['published','Publicado'],['updated','Actualizado']]" :key="key">
-            <label class="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
-              <input type="checkbox" :checked="visibleColumns[key]"
-                @change="visibleColumns[key] = $event.target.checked; localStorage.setItem('visibleColumns', JSON.stringify(visibleColumns))"
-                class="rounded border-slate-300 text-blue-600 focus:ring-blue-400" />
-              <span x-text="label"></span>
-            </label>
-          </template>
-        </div>
-      </div>
+      <!-- Right side: Columnas + Tabla/Mapa -->
+      <div class="flex items-center gap-2 ml-auto shrink-0">
 
-      <!-- Tabla/Mapa toggle -->
-      <div class="flex rounded-lg border border-slate-200 bg-white overflow-hidden shrink-0">
-        <button @click="setView('table')"
-          :class="!mapView ? 'bg-slate-800 text-white font-semibold' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'"
-          class="px-3 py-1.5 text-xs transition flex items-center gap-1.5 whitespace-nowrap">
-          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M3 6h18M3 14h18M3 18h18"/>
-          </svg>
-          <span class="hidden md:inline">Tabla</span>
-        </button>
-        <button @click="setView('map')"
-          :class="mapView ? 'bg-slate-800 text-white font-semibold' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'"
-          class="px-3 py-1.5 text-xs transition border-l border-slate-200 flex items-center gap-1.5 whitespace-nowrap">
-          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
-          </svg>
-          <span class="hidden md:inline">Mapa</span>
-        </button>
+        <!-- Columnas dropdown -->
+        <div class="relative shrink-0 hidden md:block" x-data="{ columnsOpen: false }" @click.away="columnsOpen = false">
+          <button @click="columnsOpen = !columnsOpen"
+            class="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white transition whitespace-nowrap">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-1.5A1.125 1.125 0 0118 18.375M20.625 4.5H3.375m17.25 0c.621 0 1.125.504 1.125 1.125M20.625 4.5h-1.5C18.504 4.5 18 5.004 18 5.625m3.75 0v1.5c0 .621-.504 1.125-1.125 1.125M3.375 4.5c-.621 0-1.125.504-1.125 1.125M3.375 4.5h1.5C5.496 4.5 6 5.004 6 5.625m-3.75 0v1.5c0 .621.504 1.125 1.125 1.125m0 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m1.5-3.75C5.496 8.25 6 7.746 6 7.125v-1.5M4.875 8.25C5.496 8.25 6 8.754 6 9.375v1.5m0-5.25v5.25m0-5.25C6 5.004 6.504 4.5 7.125 4.5h9.75c.621 0 1.125.504 1.125 1.125m1.125 2.625h1.5m-1.5 0A1.125 1.125 0 0118 7.125v-1.5m1.125 2.625c-.621 0-1.125.504-1.125 1.125v1.5m2.625-2.625c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125M18 5.625v5.25M7.125 12h9.75m-9.75 0A1.125 1.125 0 016 10.875M7.125 12C6.504 12 6 12.504 6 13.125m0-2.25C6 11.496 5.496 12 4.875 12M18 10.875c0 .621-.504 1.125-1.125 1.125M18 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m-12 5.25v-5.25m0 5.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125m-12 0v-1.5c0-.621-.504-1.125-1.125-1.125M18 18.375v-5.25m0 5.25v-1.5c0-.621.504-1.125 1.125-1.125M18 13.125v1.5c0 .621.504 1.125 1.125 1.125M18 13.125c0-.621.504-1.125 1.125-1.125M6 13.125v1.5c0 .621.504-1.125 1.125-1.125M6 13.125C6 12.504 5.496 12 4.875 12m-1.5 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m1.5-3.75C5.496 12 6 12.504 6 13.125"/>
+            <span>Columnas</span>
+            <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          <div x-show="columnsOpen" x-cloak
+            class="absolute top-full right-0 mt-1 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg z-50 py-1">
+            <template x-for="[key, label] in [['status','Estado'],['review','Revisión'],['id','ID'],['type','Tipo'],['address','Dirección'],['price','Precio'],['m2','$/m²'],['amb','Ambientes'],['dorm','Dormitorios'],['expenses','Expensas'],['realEstate','Inmobiliaria'],['published','Publicado'],['updated','Actualizado']]" :key="key">
+              <label class="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
+                <input type="checkbox" :checked="visibleColumns[key]"
+                  @change="visibleColumns[key] = $event.target.checked; localStorage.setItem('visibleColumns', JSON.stringify(visibleColumns))"
+                  class="rounded border-slate-300 text-blue-600 focus:ring-blue-400" />
+                <span x-text="label"></span>
+              </label>
+            </template>
+          </div>
+        </div>
+
+        <!-- Tabla/Mapa toggle -->
+        <div class="flex rounded-lg border border-slate-200 bg-white overflow-hidden shrink-0">
+          <button @click="setView('table')"
+            :class="!mapView ? 'bg-slate-800 text-white font-semibold' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'"
+            class="px-3 py-1.5 text-xs transition flex items-center gap-1.5 whitespace-nowrap">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M3 6h18M3 14h18M3 18h18"/>
+            </svg>
+            <span>Tabla</span>
+          </button>
+          <button @click="setView('map')"
+            :class="mapView ? 'bg-slate-800 text-white font-semibold' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'"
+            class="px-3 py-1.5 text-xs transition border-l border-slate-200 flex items-center gap-1.5 whitespace-nowrap">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+            </svg>
+            <span>Mapa</span>
+          </button>
+        </div>
+
       </div>
 
       <!-- Mobile: toggle info panels (URL + summary) -->
