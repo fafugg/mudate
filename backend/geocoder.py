@@ -33,16 +33,16 @@ from typing import List, Optional, Tuple
 
 import httpx
 
+from config import settings
+
 logger = logging.getLogger(__name__)
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
-# Nominatim requires an identifying User-Agent per their usage policy.
-_NOM_UA    = "CasaTracker/1.0 (personal-use geocoder)"
 _NOMINATIM = "https://nominatim.openstreetmap.org/search"
 _OPENCAGE  = "https://api.opencagedata.com/geocode/v1/json"
 
-_OPENCAGE_KEY: str = os.environ.get("OPENCAGE_API_KEY", "")
+_OPENCAGE_KEY: str = settings.opencage_api_key
 
 # ── Shared async HTTP client (connection pooling + keep-alive) ────────────────
 
@@ -72,7 +72,7 @@ def _get_http() -> httpx.AsyncClient:
 _nom_sched_lock: Optional[asyncio.Semaphore] = None
 _nom_next_send:  float = 0.0
 
-_NOM_INTERVAL = 1.1  # seconds between consecutive Nominatim request sends
+_NOM_INTERVAL = settings.nominatim_interval  # seconds between consecutive Nominatim request sends
 
 
 def _get_nom_sched() -> asyncio.Semaphore:
@@ -145,7 +145,7 @@ async def _nominatim_raw(query: str) -> Optional[Tuple[float, float]]:
     try:
         r = await _get_http().get(
             f"{_NOMINATIM}?{params}",
-            headers={"User-Agent": _NOM_UA},
+            headers={"User-Agent": settings.nominatim_ua},
         )
         data = r.json()
         if data:

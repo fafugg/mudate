@@ -4,8 +4,9 @@ from datetime import datetime, timezone
 from filelock import FileLock
 from typing import Callable
 
-_BASE = os.path.dirname(__file__)
-DB_PATH = os.environ.get("DB_PATH", os.path.join(_BASE, "..", "db.json"))
+from config import settings
+
+DB_PATH = settings.db_path
 LOCK_PATH = DB_PATH + ".lock"
 _lock = FileLock(LOCK_PATH)
 
