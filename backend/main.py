@@ -1,11 +1,15 @@
 import asyncio
 import json
+import logging
 import os
 import re
 import tempfile
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,11 +17,37 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from geocoding_tasks import run_geocode
 from scheduler import get_scheduler_status, setup_scheduler
-from scrapers import run_scrape, _make_run
+from schemas import (
+    CreateSessionRequest,
+    ErrorResponse,
+    GeocodeResponse,
+    OkResponse,
+    RunCreatedResponse,
+    RunResponse,
+    SchedulerResponse,
+    SessionResponse,
+    UpdateHouseRequest,
+    UpdateSessionRequest,
+    UserResponse,
+)
+from scrapers import run_scrape, make_run
 from storage import DB_PATH, _now, atomic_update, read_db
+from config import settings
 
-app = FastAPI(title="Mudate")
+# In-memory run status store (keyed by run_id)
+runs: Dict[str, dict] = {}
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan: startup and shutdown events."""
+    setup_scheduler(runs)
+    yield
+
+
+app = FastAPI(title="Mudate", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,21 +56,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory run status store (keyed by run_id)
-runs: Dict[str, dict] = {}
-
-
-# ── Startup ──────────────────────────────────────────────────────────────────
-
-@app.on_event("startup")
-async def startup():
-    setup_scheduler(runs)
-
 
 # ── Users & sessions ─────────────────────────────────────────────────────────
 
-@app.get("/api/users/{username}")
-async def get_user(username: str) -> dict:
+@app.get("/api/users/{username}", response_model=UserResponse)
+async def get_user(username: str):
     """Devuelve los datos del usuario y sus sesiones ordenadas por última ejecución."""
     username = _validate_username(username)
     db = read_db()
@@ -60,17 +80,11 @@ async def get_user(username: str) -> dict:
     return {"username": username, "is_new": is_new, "sessions": sessions}
 
 
-class CreateSessionBody(BaseModel):
-    search_engine: str
-    search_filter: str
-    label: Optional[str] = None
-
-
 @app.post("/api/users/{username}/sessions", status_code=201)
-async def create_session(username: str, body: CreateSessionBody) -> dict:
+async def create_session(username: str, body: CreateSessionRequest):
     """Crea una nueva sesión de búsqueda para el usuario."""
     username = _validate_username(username)
-    if body.search_engine not in ("zonaprop", "argenprop", "mercadolibre", "remax"):
+    if body.search_engine not in settings.valid_engines:
         raise HTTPException(400, "search_engine must be 'zonaprop', 'argenprop', 'mercadolibre', or 'remax'")
 
     session_id = str(uuid.uuid4())
@@ -93,25 +107,20 @@ async def create_session(username: str, body: CreateSessionBody) -> dict:
     return session
 
 
-@app.get("/api/users/{username}/sessions/{session_id}")
-async def get_session(username: str, session_id: str) -> dict:
+@app.get("/api/users/{username}/sessions/{session_id}", response_model=SessionResponse)
+async def get_session(username: str, session_id: str):
     """Devuelve una sesión con sus propiedades asociadas."""
-    username = username.lower()
+    username = _validate_username(username)
     db = read_db()
     session = _session_or_404(db, username, session_id)
     houses = [db["houses"][hid] for hid in session["house_ids"] if hid in db["houses"]]
     return {**session, "houses": houses}
 
 
-class UpdateSessionBody(BaseModel):
-    search_filter: Optional[str] = None
-    label: Optional[str] = None
-
-
-@app.delete("/api/users/{username}/sessions/{session_id}")
-async def delete_session(username: str, session_id: str) -> dict:
+@app.delete("/api/users/{username}/sessions/{session_id}", response_model=OkResponse)
+async def delete_session(username: str, session_id: str):
     """Elimina una sesión y todas sus propiedades asociadas."""
-    username = username.lower()
+    username = _validate_username(username)
     def update(db: dict):
         session = _session_or_404(db, username, session_id)
         for hid in session.get("house_ids", []):
@@ -121,10 +130,10 @@ async def delete_session(username: str, session_id: str) -> dict:
     return {"ok": True}
 
 
-@app.put("/api/users/{username}/sessions/{session_id}")
-async def update_session(username: str, session_id: str, body: UpdateSessionBody) -> dict:
+@app.put("/api/users/{username}/sessions/{session_id}", response_model=OkResponse)
+async def update_session(username: str, session_id: str, body: UpdateSessionRequest):
     """Actualiza el filtro de búsqueda o etiqueta de una sesión."""
-    username = username.lower()
+    username = _validate_username(username)
     def update(db: dict):
         session = _session_or_404(db, username, session_id)
         if body.search_filter is not None:
@@ -136,12 +145,12 @@ async def update_session(username: str, session_id: str, body: UpdateSessionBody
     return {"ok": True}
 
 
-@app.post("/api/users/{username}/sessions/{session_id}/run")
+@app.post("/api/users/{username}/sessions/{session_id}/run", response_model=RunCreatedResponse)
 async def run_session(
     username: str, session_id: str, background_tasks: BackgroundTasks
-) -> dict:
+):
     """Lanza un scraping en background para la sesión indicada."""
-    username = username.lower()
+    username = _validate_username(username)
     db = read_db()
     session = _session_or_404(db, username, session_id)
 
@@ -152,7 +161,7 @@ async def run_session(
 
     _prune_runs(runs)
     run_id = str(uuid.uuid4())
-    runs[run_id] = _make_run(run_id, session_id=session_id, triggered_by="manual")
+    runs[run_id] = make_run(run_id, session_id=session_id, triggered_by="manual")
     background_tasks.add_task(
         run_scrape,
         session=session,
@@ -163,14 +172,8 @@ async def run_session(
     return {"run_id": run_id}
 
 
-class UpdateHouseBody(BaseModel):
-    review: Optional[str] = None
-    notes: Optional[str] = None
-    manual_address: Optional[str] = None
-
-
-@app.patch("/api/houses/{house_id}")
-async def update_house(house_id: str, body: UpdateHouseBody) -> dict:
+@app.patch("/api/houses/{house_id}", response_model=OkResponse)
+async def update_house(house_id: str, body: UpdateHouseRequest):
     """Actualiza review, notas o dirección manual de una propiedad."""
     def update(db: dict):
         if house_id not in db["houses"]:
@@ -188,8 +191,8 @@ async def update_house(house_id: str, body: UpdateHouseBody) -> dict:
     return {"ok": True}
 
 
-@app.get("/api/houses/{house_id}")
-async def get_house(house_id: str) -> dict:
+@app.get("/api/houses/{house_id}", response_model=Dict[str, Any])
+async def get_house(house_id: str):
     """Devuelve los datos completos de una propiedad."""
     db = read_db()
     house = db["houses"].get(house_id)
@@ -198,8 +201,8 @@ async def get_house(house_id: str) -> dict:
     return house
 
 
-@app.post("/api/houses/{house_id}/geocode")
-async def geocode_house(house_id: str, background_tasks: BackgroundTasks) -> dict:
+@app.post("/api/houses/{house_id}/geocode", response_model=GeocodeResponse)
+async def geocode_house(house_id: str, background_tasks: BackgroundTasks):
     """Lanza la geocodificación de una propiedad individual."""
     db = read_db()
     house = db["houses"].get(house_id)
@@ -211,21 +214,21 @@ async def geocode_house(house_id: str, background_tasks: BackgroundTasks) -> dic
 
     _prune_runs(runs)
     run_id = str(uuid.uuid4())
-    runs[run_id] = _make_run(run_id, total=1, message="Geocodificando…", triggered_by="geocode_single")
-    background_tasks.add_task(_run_geocode, house_ids=[house_id], run_id=run_id, runs=runs)
+    runs[run_id] = make_run(run_id, total=1, message="Geocodificando…", triggered_by="geocode_single")
+    background_tasks.add_task(run_geocode, house_ids=[house_id], run_id=run_id, runs=runs)
     return {"run_id": run_id, "already_done": False}
 
 
-@app.get("/api/runs/{run_id}")
-async def get_run(run_id: str) -> dict:
+@app.get("/api/runs/{run_id}", response_model=RunResponse)
+async def get_run(run_id: str):
     """Devuelve el estado de un scraping o geocodificación en curso."""
     if run_id not in runs:
         raise HTTPException(404, "Run not found")
     return runs[run_id]
 
 
-@app.delete("/api/runs/{run_id}")
-async def cancel_run(run_id: str) -> dict:
+@app.delete("/api/runs/{run_id}", response_model=OkResponse)
+async def cancel_run(run_id: str):
     """Cancela un scraping o geocodificación en curso."""
     if run_id not in runs:
         raise HTTPException(404, "Run not found")
@@ -240,13 +243,13 @@ async def cancel_run(run_id: str) -> dict:
 
 # ── Geocoding ────────────────────────────────────────────────────────────────
 
-@app.post("/api/users/{username}/sessions/{session_id}/geocode")
+@app.post("/api/users/{username}/sessions/{session_id}/geocode", response_model=GeocodeResponse)
 async def geocode_session(
     username: str, session_id: str, background_tasks: BackgroundTasks,
     force: bool = False,
-) -> dict:
+):
     """Lanza la geocodificación en background para todas las propiedades de la sesión."""
-    username = username.lower()
+    username = _validate_username(username)
     db = read_db()
     session = _session_or_404(db, username, session_id)
 
@@ -271,73 +274,15 @@ async def geocode_session(
 
     _prune_runs(runs)
     run_id = str(uuid.uuid4())
-    runs[run_id] = _make_run(
+    runs[run_id] = make_run(
         run_id,
         session_id=session_id,
         total=len(needs_api),
         message="Geocodificando direcciones…",
         triggered_by="geocode",
     )
-    background_tasks.add_task(_run_geocode, house_ids=needs_api, run_id=run_id, runs=runs)
+    background_tasks.add_task(run_geocode, house_ids=needs_api, run_id=run_id, runs=runs)
     return {"run_id": run_id, "already_done": False}
-
-
-async def _run_geocode(house_ids: List[str], run_id: str, runs: Dict) -> None:
-    """
-    Geocode a list of houses concurrently.
-
-    Up to _GEOCODE_BATCH houses run at the same time. Within each call,
-    geocoder.py races Photon (no hard rate limit) against Nominatim (1 req/s,
-    enforced globally by a shared lock inside the geocoder module). The
-    per-house sleep is gone — rate limiting lives entirely in the geocoder.
-    """
-    from geocoder import geocode as _geocode
-
-    _GEOCODE_BATCH = 10          # max concurrent geocode tasks
-    total     = len(house_ids)
-    completed = 0
-    sem       = asyncio.Semaphore(_GEOCODE_BATCH)
-    lock      = asyncio.Lock()   # guards `completed` counter
-
-    async def _one(hid: str) -> None:
-        nonlocal completed
-        async with sem:
-            if runs[run_id].get("cancelled"):
-                return
-
-            db      = read_db()
-            house   = db["houses"].get(hid, {})
-            address = house.get("manual_address") or house.get("address")
-
-            if address:
-                lat, lng = await _geocode(address)
-
-                def _save(db: dict, _hid=hid, _lat=lat, _lng=lng):
-                    if _hid in db["houses"]:
-                        db["houses"][_hid]["lat"] = _lat
-                        db["houses"][_hid]["lng"] = _lng
-                        db["houses"][_hid]["geocode_failed"] = _lat is None
-
-                atomic_update(_save)
-
-            async with lock:
-                completed += 1
-                runs[run_id].update({
-                    "progress": completed,
-                    "message":  f"Geocodificando {completed}/{total}…",
-                })
-
-    await asyncio.gather(*[_one(hid) for hid in house_ids])
-
-    if runs[run_id].get("cancelled"):
-        runs[run_id].update({"status": "cancelled", "message": "Cancelado.", "finished_at": _now()})
-    else:
-        runs[run_id].update({
-            "status":      "done",
-            "message":     f"Listo. {total} direcciones procesadas.",
-            "progress":    total,
-            "finished_at": _now(),
-        })
 
 
 # ── DB export ────────────────────────────────────────────────────────────────
@@ -354,8 +299,8 @@ async def export_db() -> FileResponse:
     )
 
 
-@app.post("/api/admin/import-db")
-async def import_db(file: UploadFile = File(...)) -> dict:
+@app.post("/api/admin/import-db", response_model=OkResponse)
+async def import_db(file: UploadFile = File(...)):
     """Importa un respaldo JSON reemplazando la base de datos actual."""
     # 1. Filename check
     if file.filename != "db-backup.json":
@@ -367,7 +312,7 @@ async def import_db(file: UploadFile = File(...)) -> dict:
 
     content = await file.read()
 
-    if len(content) > 50 * 1024 * 1024:
+    if len(content) > settings.max_upload_mb * 1024 * 1024:
         raise HTTPException(400, "File too large (max 50 MB)")
 
     # 2. JSON validity check
@@ -402,10 +347,10 @@ async def import_db(file: UploadFile = File(...)) -> dict:
 
 # ── Clear geo data ───────────────────────────────────────────────────────────
 
-@app.delete("/api/users/{username}/sessions/{session_id}/geodata")
-async def clear_geodata(username: str, session_id: str) -> dict:
+@app.delete("/api/users/{username}/sessions/{session_id}/geodata", response_model=OkResponse)
+async def clear_geodata(username: str, session_id: str):
     """Borra las coordenadas geográficas de todas las propiedades de la sesión."""
-    username = username.lower()
+    username = _validate_username(username)
     def update(db: dict):
         session = _session_or_404(db, username, session_id)
         for hid in session.get("house_ids", []):
@@ -419,15 +364,15 @@ async def clear_geodata(username: str, session_id: str) -> dict:
 
 # ── Scheduler status ─────────────────────────────────────────────────────────
 
-@app.get("/api/scheduler")
-async def scheduler_status() -> dict:
+@app.get("/api/scheduler", response_model=SchedulerResponse)
+async def scheduler_status():
     """Devuelve el estado del programador de tareas."""
     return get_scheduler_status()
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _prune_runs(runs: dict, max_age_hours: int = 24) -> None:
+def _prune_runs(runs: dict, max_age_hours: int = settings.run_prune_hours) -> None:
     """Remove finished runs older than max_age_hours to prevent unbounded growth."""
     from datetime import timedelta
     from datetime import timezone

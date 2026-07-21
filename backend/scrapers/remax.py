@@ -1,17 +1,18 @@
 import asyncio
 import json
+import logging
 import re
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set
 
 import httpx
-from playwright.async_api import async_playwright
 
-from .base import BaseScraper
+from .base import BaseScraper, UA, coerce_float, coerce_int, normalize_phone
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.remax.com.ar"
 API_BASE = "https://api-ar.redremax.com/remaxweb-ar/api"
-UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 REMAX_CDN = "https://d1acdg20u0pmxj.cloudfront.net/"
 
@@ -48,90 +49,75 @@ class RemaxScraper(BaseScraper):
         results: List[Dict[str, Any]] = []
         seen_ids: set = set()
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(
-                user_agent=UA,
-                viewport={"width": 1280, "height": 900},
-                locale="es-AR",
-            )
-            page = await context.new_page()
-            await page.add_init_script(
-                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
-            )
+        async with self.launch_browser() as page:
+            current_page = 0
+            total_pages = 1
 
-            try:
-                current_page = 0
-                total_pages = 1
+            while current_page < total_pages:
+                if cancel_check and cancel_check():
+                    break
 
-                while current_page < total_pages:
-                    if cancel_check and cancel_check():
-                        break
-
-                    url = self._page_url(search_filter, current_page)
-                    if progress_callback:
-                        progress_callback(
-                            f"Cargando página {current_page + 1}/{total_pages} — {len(results)} propiedades",
-                            len(results),
-                            len(results),
-                        )
-
-                    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                    await asyncio.sleep(3)
-
-                    # Extract ng-state JSON
-                    ng_state = await page.evaluate(
-                        """() => {
-                            const el = document.getElementById('ng-state');
-                            if (!el) return null;
-                            try { return JSON.parse(el.textContent); } catch(e) { return null; }
-                        }"""
+                url = self._page_url(search_filter, current_page)
+                if progress_callback:
+                    progress_callback(
+                        f"Cargando página {current_page + 1}/{total_pages} — {len(results)} propiedades",
+                        len(results),
+                        len(results),
                     )
 
-                    card_listings, total_pages = self._parse_ng_state(ng_state)
+                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(3)
 
-                    if not card_listings:
-                        break
+                # Extract ng-state JSON
+                ng_state = await page.evaluate(
+                    """() => {
+                        const el = document.getElementById('ng-state');
+                        if (!el) return null;
+                        try { return JSON.parse(el.textContent); } catch(e) { return null; }
+                    }"""
+                )
 
-                    added = 0
-                    for card in card_listings:
-                        se_id = card.get("search_engine_id") or ""
-                        if se_id in seen_ids:
-                            continue
-                        seen_ids.add(se_id)
+                card_listings, total_pages = self._parse_ng_state(ng_state)
 
-                        is_known = bool(existing_ids and se_id and se_id in existing_ids)
-                        if progress_callback:
-                            action = "Verificando precio" if is_known else "Descargando detalle"
-                            progress_callback(
-                                f"Pág {current_page + 1}/{total_pages} — {action} {added + 1}/{len(card_listings)}",
-                                len(results) + added,
-                                len(results) + len(card_listings),
-                            )
+                if not card_listings:
+                    break
 
-                        if not is_known:
-                            entity_id = card.get("_entity_id")
-                            if entity_id:
-                                detail = await _fetch_detail_api(entity_id)
-                                card.update({k: v for k, v in detail.items() if v is not None})
+                added = 0
+                for card in card_listings:
+                    se_id = card.get("search_engine_id") or ""
+                    if se_id in seen_ids:
+                        continue
+                    seen_ids.add(se_id)
 
-                        card["price_per_m2"] = self.compute_price_per_m2(
-                            card.get("price"), card.get("covered_m2") or card.get("total_m2")
+                    is_known = bool(existing_ids and se_id and se_id in existing_ids)
+                    if progress_callback:
+                        action = "Verificando precio" if is_known else "Descargando detalle"
+                        progress_callback(
+                            f"Pág {current_page + 1}/{total_pages} — {action} {added + 1}/{len(card_listings)}",
+                            len(results) + added,
+                            len(results) + len(card_listings),
                         )
-                        results.append(card)
-                        added += 1
 
-                        if not is_known:
-                            await asyncio.sleep(0.5)
+                    if not is_known:
+                        entity_id = card.get("_entity_id")
+                        if entity_id:
+                            detail = await _fetch_detail_api(entity_id)
+                            card.update({k: v for k, v in detail.items() if v is not None})
 
-                    if added == 0:
-                        break
+                    card["price_per_m2"] = self.compute_price_per_m2(
+                        card.get("price"), card.get("covered_m2") or card.get("total_m2")
+                    )
+                    results.append(card)
+                    added += 1
 
-                    current_page += 1
-                    await asyncio.sleep(self.delay)
+                    if not is_known:
+                        await asyncio.sleep(0.5)
 
-            finally:
-                await browser.close()
+                if added == 0:
+                    break
+
+                current_page += 1
+                await asyncio.sleep(self.delay)
 
         return results
 
@@ -190,7 +176,7 @@ def _parse_remax_listing(item: dict) -> Optional[Dict[str, Any]]:
         # Price
         price = item.get("price")
         if isinstance(price, str):
-            price = _coerce_float(price)
+            price = coerce_float(price)
 
         currency_obj = item.get("currency", {})
         currency = currency_obj.get("value", "USD") if isinstance(currency_obj, dict) else "USD"
@@ -201,22 +187,22 @@ def _parse_remax_listing(item: dict) -> Optional[Dict[str, Any]]:
         # Rooms
         ambientes = item.get("totalRooms")
         if isinstance(ambientes, str):
-            ambientes = _coerce_int(ambientes)
+            ambientes = coerce_int(ambientes)
 
         dormitorios = item.get("bedrooms")
         if isinstance(dormitorios, str):
-            dormitorios = _coerce_int(dormitorios)
+            dormitorios = coerce_int(dormitorios)
 
         banos = item.get("bathrooms")
         if isinstance(banos, str):
-            banos = _coerce_int(banos)
+            banos = coerce_int(banos)
 
         # M2
-        covered_m2 = _coerce_float(item.get("dimensionCovered"))
-        total_m2 = _coerce_float(item.get("dimensionTotalBuilt"))
+        covered_m2 = coerce_float(item.get("dimensionCovered"))
+        total_m2 = coerce_float(item.get("dimensionTotalBuilt"))
 
         # Expenses
-        expenses = _coerce_float(item.get("expensesPrice"))
+        expenses = coerce_float(item.get("expensesPrice"))
         exp_curr_obj = item.get("expensesCurrency", {})
         expenses_currency = exp_curr_obj.get("value", "ARS") if isinstance(exp_curr_obj, dict) else "ARS"
 
@@ -246,12 +232,7 @@ def _parse_remax_listing(item: dict) -> Optional[Dict[str, Any]]:
         if isinstance(associate, dict):
             raw_phone = associate.get("phone") or ""
             if raw_phone:
-                digits = re.sub(r"\D", "", str(raw_phone))
-                if digits.startswith("54"):
-                    digits = digits[2:]
-                if digits.startswith("9"):
-                    digits = digits[1:]
-                phone = f"+54 {digits}" if digits else None
+                phone = normalize_phone(raw_phone)
 
         # Published date
         published_at = None
@@ -339,7 +320,7 @@ async def _fetch_detail_api(entity_id: str) -> Dict[str, Any]:
             year_built = listing.get("yearBuilt")
             if year_built:
                 try:
-                    result["age_years"] = 2025 - int(year_built)
+                    result["age_years"] = datetime.now().year - int(year_built)
                 except (ValueError, TypeError):
                     pass
 
@@ -356,7 +337,7 @@ async def _fetch_detail_api(entity_id: str) -> Dict[str, Any]:
             # Toilets
             toilets = listing.get("toilets")
             if toilets:
-                result["toilets"] = int(toilets)
+                result["toilettes"] = int(toilets)
 
             # Expenses
             exp_price = listing.get("expensesPrice")
@@ -405,29 +386,10 @@ async def _fetch_detail_api(entity_id: str) -> Dict[str, Any]:
                         if isinstance(phone_obj, dict) and phone_obj.get("primary"):
                             raw_phone = phone_obj.get("value", "")
                             if raw_phone:
-                                digits = re.sub(r"\D", "", raw_phone)
-                                if digits.startswith("54"):
-                                    digits = digits[2:]
-                                if digits.startswith("9"):
-                                    digits = digits[1:]
-                                result["real_estate_phone"] = f"+54 {digits}" if digits else None
+                                result["real_estate_phone"] = normalize_phone(raw_phone)
                                 break
 
             return result
     except Exception as e:
-        print(f"[REMAX-API-ERR] {entity_id} → {type(e).__name__}: {e}")
+        logger.error("REMAX API error %s: %s: %s", entity_id, type(e).__name__, e)
         return {}
-
-
-def _coerce_float(v) -> Optional[float]:
-    if v is None:
-        return None
-    try:
-        return float(str(v).replace(".", "").replace(",", ".").strip())
-    except (ValueError, TypeError):
-        return None
-
-
-def _coerce_int(v) -> Optional[int]:
-    f = _coerce_float(v)
-    return int(f) if f is not None else None
