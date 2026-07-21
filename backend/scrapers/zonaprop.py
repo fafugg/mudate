@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import json
+import logging
 import os
 import random
 import re
@@ -9,10 +10,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
-from .base import BaseScraper
+from .base import BaseScraper, UA, normalize_phone, parse_price
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.zonaprop.com.ar"
-UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
 # Run headed locally (bypasses Cloudflare more reliably) but headless in Docker.
 # /.dockerenv is created by Docker on every container — reliable, macOS-safe.
 # PLAYWRIGHT_HEADLESS env var always overrides (1/true = force headless, 0/false = force headed).
@@ -444,7 +447,7 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
         html = await page.content()
         return _extract_detail(html)
     except Exception as e:
-        print(f"[ZP-DETAIL-ERR] {url[-80:]} → {type(e).__name__}: {e}")
+        logger.error("ZP detail error %s: %s: %s", url[-80:], type(e).__name__, e)
         return {}
 
 
@@ -858,14 +861,7 @@ def _get_publisher(soup: BeautifulSoup, ld: dict) -> Optional[str]:
 
 def _get_publisher_phone(ld: dict) -> Optional[str]:
     raw = str(ld.get("telephone") or "").strip()
-    if not raw:
-        return None
-    digits = re.sub(r"\D", "", raw)
-    if digits.startswith("54"):
-        digits = digits[2:]
-    if digits.startswith("9"):
-        digits = digits[1:]
-    return "+54 " + digits if digits else None
+    return normalize_phone(raw)
 
 
 def _get_published_at(soup: BeautifulSoup, ld: dict) -> Optional[str]:
@@ -901,18 +897,7 @@ def _clean_address(address: str) -> str:
 
 
 def _parse_price(text: str) -> Tuple[Optional[float], str]:
-    if not text:
-        return None, "USD"
-    upper = text.upper()
-    currency = "USD" if ("U$S" in upper or "USD" in upper or "US$" in upper) else "ARS"
-    cleaned = re.sub(r"[A-Za-z$U\s]", "", text).replace(".", "").replace(",", ".")
-    m = re.search(r"\d+(?:\.\d+)?", cleaned)
-    if m:
-        try:
-            return float(m.group()), currency
-        except ValueError:
-            pass
-    return None, currency
+    return parse_price(text)
 
 
 def _parse_num(text: str) -> Optional[float]:

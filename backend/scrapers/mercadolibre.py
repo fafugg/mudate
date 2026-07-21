@@ -1,14 +1,14 @@
 import asyncio
 import json
+import logging
 import re
 from typing import Any, Callable, Dict, List, Optional, Set
 
-from playwright.async_api import async_playwright
+from .base import BaseScraper, UA, coerce_float, coerce_int
 
-from .base import BaseScraper
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://inmuebles.mercadolibre.com.ar"
-UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 
 class MercadoLibreScraper(BaseScraper):
@@ -32,81 +32,66 @@ class MercadoLibreScraper(BaseScraper):
         seen_ids: set = set()
         PAGE_SIZE = 48
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(
-                user_agent=UA,
-                viewport={"width": 1280, "height": 900},
-                locale="es-AR",
-            )
-            page = await context.new_page()
-            await page.add_init_script(
-                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
-            )
+        async with self.launch_browser() as page:
+            current_offset = 0
+            has_more = True
 
-            try:
-                current_offset = 0
-                has_more = True
+            while has_more:
+                if cancel_check and cancel_check():
+                    break
 
-                while has_more:
-                    if cancel_check and cancel_check():
-                        break
+                url = self._page_url(search_filter, current_offset)
+                page_num = (current_offset // PAGE_SIZE) + 1
+                if progress_callback:
+                    progress_callback(
+                        f"Cargando página {page_num} — {len(results)} propiedades",
+                        len(results),
+                        len(results),
+                    )
 
-                    url = self._page_url(search_filter, current_offset)
-                    page_num = (current_offset // PAGE_SIZE) + 1
+                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(2)
+
+                card_listings = self._extract_from_json_ld(await page.content())
+
+                if not card_listings:
+                    break
+
+                added = 0
+                for card in card_listings:
+                    se_id = card.get("search_engine_id") or ""
+                    if se_id in seen_ids:
+                        continue
+                    seen_ids.add(se_id)
+
+                    is_known = bool(existing_ids and se_id and se_id in existing_ids)
                     if progress_callback:
+                        action = "Verificando precio" if is_known else "Descargando detalle"
                         progress_callback(
-                            f"Cargando página {page_num} — {len(results)} propiedades",
-                            len(results),
-                            len(results),
+                            f"Pág {page_num} — {action} {added + 1}/{len(card_listings)}",
+                            len(results) + added,
+                            len(results) + len(card_listings),
                         )
 
-                    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                    await asyncio.sleep(2)
+                    if not is_known and card.get("url"):
+                        detail = await _scrape_detail(page, card["url"])
+                        card.update({k: v for k, v in detail.items() if v is not None})
 
-                    card_listings = self._extract_from_json_ld(await page.content())
+                    card["price_per_m2"] = self.compute_price_per_m2(
+                        card.get("price"), card.get("covered_m2") or card.get("total_m2")
+                    )
+                    results.append(card)
+                    added += 1
 
-                    if not card_listings:
-                        break
+                    if not is_known:
+                        await asyncio.sleep(1.5)
 
-                    added = 0
-                    for card in card_listings:
-                        se_id = card.get("search_engine_id") or ""
-                        if se_id in seen_ids:
-                            continue
-                        seen_ids.add(se_id)
+                if added == 0:
+                    break
 
-                        is_known = bool(existing_ids and se_id and se_id in existing_ids)
-                        if progress_callback:
-                            action = "Verificando precio" if is_known else "Descargando detalle"
-                            progress_callback(
-                                f"Pág {page_num} — {action} {added + 1}/{len(card_listings)}",
-                                len(results) + added,
-                                len(results) + len(card_listings),
-                            )
-
-                        if not is_known and card.get("url"):
-                            detail = await _scrape_detail(page, card["url"])
-                            card.update({k: v for k, v in detail.items() if v is not None})
-
-                        card["price_per_m2"] = self.compute_price_per_m2(
-                            card.get("price"), card.get("covered_m2") or card.get("total_m2")
-                        )
-                        results.append(card)
-                        added += 1
-
-                        if not is_known:
-                            await asyncio.sleep(1.5)
-
-                    if added == 0:
-                        break
-
-                    current_offset += PAGE_SIZE
-                    has_more = len(card_listings) == PAGE_SIZE
-                    await asyncio.sleep(self.delay)
-
-            finally:
-                await browser.close()
+                current_offset += PAGE_SIZE
+                has_more = len(card_listings) == PAGE_SIZE
+                await asyncio.sleep(self.delay)
 
         return results
 
@@ -156,7 +141,7 @@ def _parse_json_ld_listing(item: dict) -> Optional[Dict[str, Any]]:
         address = ", ".join(filter(None, [locality, region]))
 
         floor_size = item.get("floorSize", {})
-        total_m2 = _coerce_float(floor_size.get("value")) if floor_size.get("unitCode") == "MTK" else None
+        total_m2 = coerce_float(floor_size.get("value")) if floor_size.get("unitCode") == "MTK" else None
 
         seller = item.get("seller", {})
         real_estate = seller.get("name") if isinstance(seller, dict) else None
@@ -169,10 +154,10 @@ def _parse_json_ld_listing(item: dict) -> Optional[Dict[str, Any]]:
         return {
             "search_engine_id": se_id,
             "type": None,
-            "ambientes": _coerce_int(item.get("numberOfRooms")),
+            "ambientes": coerce_int(item.get("numberOfRooms")),
             "dormitorios": None,
             "banos": None,
-            "price": _coerce_float(price),
+            "price": coerce_float(price),
             "currency": currency,
             "address": address or None,
             "covered_m2": total_m2,
@@ -227,7 +212,7 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
 
         return result
     except Exception as e:
-        print(f"[ML-DETAIL-ERR] {url[-80:]} → {type(e).__name__}: {e}")
+        logger.error("ML detail error %s: %s: %s", url[-80:], type(e).__name__, e)
         return {}
 
 
@@ -298,17 +283,3 @@ async def _safe_texts(page, selector: str) -> Optional[List[str]]:
     except Exception:
         pass
     return None
-
-
-def _coerce_float(v) -> Optional[float]:
-    if v is None:
-        return None
-    try:
-        return float(str(v).replace(".", "").replace(",", ".").strip())
-    except (ValueError, TypeError):
-        return None
-
-
-def _coerce_int(v) -> Optional[int]:
-    f = _coerce_float(v)
-    return int(f) if f is not None else None

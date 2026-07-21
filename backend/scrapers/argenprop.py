@@ -1,13 +1,13 @@
 import asyncio
+import logging
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from playwright.async_api import async_playwright
+from .base import BaseScraper, UA, coerce_float, coerce_int, parse_price
 
-from .base import BaseScraper
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.argenprop.com"
-UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 
 class ArgenpropScraper(BaseScraper):
@@ -30,78 +30,63 @@ class ArgenpropScraper(BaseScraper):
     ) -> List[Dict[str, Any]]:
         results = []
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(
-                user_agent=UA,
-                viewport={"width": 1280, "height": 900},
-                locale="es-AR",
-            )
-            page = await context.new_page()
-            await page.add_init_script(
-                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
-            )
+        async with self.launch_browser() as page:
+            current_page = 1
+            total_pages = 1
 
-            try:
-                current_page = 1
-                total_pages = 1
-
-                while current_page <= total_pages:
-                    url = self._page_url(search_filter, current_page)
-                    if progress_callback:
-                        progress_callback(
-                            f"Cargando página {current_page}/{total_pages}...",
-                            len(results),
-                            len(results),
-                        )
-
-                    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                    await asyncio.sleep(2)
-
-                    # Try __NEXT_DATA__ first
-                    next_data = await page.evaluate(
-                        "() => { try { return JSON.parse(document.getElementById('__NEXT_DATA__').textContent); } catch(e) { return null; } }"
+            while current_page <= total_pages:
+                url = self._page_url(search_filter, current_page)
+                if progress_callback:
+                    progress_callback(
+                        f"Cargando página {current_page}/{total_pages}...",
+                        len(results),
+                        len(results),
                     )
 
-                    card_listings = []
-                    if next_data:
-                        card_listings, total_pages = _extract_from_next_data(next_data, current_page)
+                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(2)
 
-                    if not card_listings:
-                        card_listings, total_pages = await _extract_from_dom(page, current_page)
+                # Try __NEXT_DATA__ first
+                next_data = await page.evaluate(
+                    "() => { try { return JSON.parse(document.getElementById('__NEXT_DATA__').textContent); } catch(e) { return null; } }"
+                )
 
-                    if not card_listings:
+                card_listings = []
+                if next_data:
+                    card_listings, total_pages = _extract_from_next_data(next_data, current_page)
+
+                if not card_listings:
+                    card_listings, total_pages = await _extract_from_dom(page, current_page)
+
+                if not card_listings:
+                    break
+
+                for i, card in enumerate(card_listings):
+                    if cancel_check and cancel_check():
                         break
-
-                    for i, card in enumerate(card_listings):
-                        if cancel_check and cancel_check():
-                            break
-                        se_id    = card.get("search_engine_id") or ""
-                        is_known = bool(existing_ids and se_id and se_id in existing_ids)
-                        if progress_callback:
-                            action = "Verificando precio" if is_known else "Descargando detalle"
-                            progress_callback(
-                                f"Pág {current_page}/{total_pages} — {action} {i+1}/{len(card_listings)}",
-                                len(results) + i,
-                                len(results) + len(card_listings),
-                            )
-
-                        if not is_known and card.get("url"):
-                            detail = await _scrape_detail(page, card["url"])
-                            card.update({k: v for k, v in detail.items() if v is not None})
-
-                        card["price_per_m2"] = self.compute_price_per_m2(
-                            card.get("price"), card.get("covered_m2") or card.get("total_m2")
+                    se_id    = card.get("search_engine_id") or ""
+                    is_known = bool(existing_ids and se_id and se_id in existing_ids)
+                    if progress_callback:
+                        action = "Verificando precio" if is_known else "Descargando detalle"
+                        progress_callback(
+                            f"Pág {current_page}/{total_pages} — {action} {i+1}/{len(card_listings)}",
+                            len(results) + i,
+                            len(results) + len(card_listings),
                         )
-                        results.append(card)
-                        if not is_known:
-                            await asyncio.sleep(1.5)
 
-                    current_page += 1
-                    await asyncio.sleep(self.delay)
+                    if not is_known and card.get("url"):
+                        detail = await _scrape_detail(page, card["url"])
+                        card.update({k: v for k, v in detail.items() if v is not None})
 
-            finally:
-                await browser.close()
+                    card["price_per_m2"] = self.compute_price_per_m2(
+                        card.get("price"), card.get("covered_m2") or card.get("total_m2")
+                    )
+                    results.append(card)
+                    if not is_known:
+                        await asyncio.sleep(1.5)
+
+                current_page += 1
+                await asyncio.sleep(self.delay)
 
         return results
 
@@ -141,15 +126,15 @@ def _parse_next_posting(p: dict) -> Optional[Dict[str, Any]]:
             or ""
         )
 
-        covered = _coerce_float(
+        covered = coerce_float(
             p.get("coveredSurface") or p.get("superficieCubierta") or p.get("superficie_cubierta")
         )
-        total_m2 = _coerce_float(
+        total_m2 = coerce_float(
             p.get("totalSurface") or p.get("superficieTotal") or p.get("superficie_total")
         )
-        ambientes = _coerce_int(p.get("rooms") or p.get("ambientes"))
-        dormitorios = _coerce_int(p.get("bedrooms") or p.get("dormitorios"))
-        banos = _coerce_int(p.get("bathrooms") or p.get("banos"))
+        ambientes = coerce_int(p.get("rooms") or p.get("ambientes"))
+        dormitorios = coerce_int(p.get("bedrooms") or p.get("dormitorios"))
+        banos = coerce_int(p.get("bathrooms") or p.get("banos"))
 
         prop_type = (
             p.get("propertyType", {}).get("name")
@@ -175,7 +160,7 @@ def _parse_next_posting(p: dict) -> Optional[Dict[str, Any]]:
             "ambientes": ambientes,
             "dormitorios": dormitorios,
             "banos": banos,
-            "price": _coerce_float(raw_price),
+            "price": coerce_float(raw_price),
             "currency": currency,
             "address": address,
             "covered_m2": covered,
@@ -276,7 +261,7 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
             return _extract_detail_from_next_data(next_data)
         return await _extract_detail_from_dom(page)
     except Exception as e:
-        print(f"[AP-DETAIL-ERR] {url[-80:]} → {type(e).__name__}: {e}")
+        logger.error("AP detail error %s: %s: %s", url[-80:], type(e).__name__, e)
         return {}
 
 
@@ -293,7 +278,7 @@ def _extract_detail_from_next_data(data: dict) -> Dict[str, Any]:
                 amenities.append(a)
 
         expenses_raw = posting.get("expenses") or posting.get("expensas") or {}
-        expenses = _coerce_float(expenses_raw.get("amount") if isinstance(expenses_raw, dict) else expenses_raw)
+        expenses = coerce_float(expenses_raw.get("amount") if isinstance(expenses_raw, dict) else expenses_raw)
         expenses_currency = (expenses_raw.get("currency") if isinstance(expenses_raw, dict) else "ARS") or "ARS"
 
         publisher = posting.get("publisher") or posting.get("inmobiliaria") or {}
@@ -303,11 +288,11 @@ def _extract_detail_from_next_data(data: dict) -> Dict[str, Any]:
         published_at = posting.get("createdAt") or posting.get("fechaPublicacion") or ""
         floor = str(posting.get("floor") or posting.get("piso") or "")
         orientation = posting.get("orientation") or posting.get("orientacion") or ""
-        age = _coerce_int(str(posting.get("antiquity") or posting.get("antiguedad") or ""))
+        age = coerce_int(str(posting.get("antiquity") or posting.get("antiguedad") or ""))
         condition = posting.get("condition") or posting.get("estado") or ""
         parking_raw = posting.get("garage") or posting.get("cochera")
         parking = bool(parking_raw) if parking_raw is not None else None
-        toilettes = _coerce_int(
+        toilettes = coerce_int(
             posting.get("toilettes")
             or posting.get("halfBathrooms")
             or posting.get("toilettes_cantidad")
@@ -412,13 +397,7 @@ async def _extract_detail_from_dom(page) -> Dict[str, Any]:
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 def _parse_price_text(text: str) -> Tuple[Optional[float], str]:
-    if not text:
-        return None, "USD"
-    upper = text.upper()
-    currency = "USD" if ("U$S" in upper or "USD" in upper or "US$" in upper) else "ARS" if "$" in text else "USD"
-    nums = re.findall(r"\d+", text.replace(".", "").replace(",", ""))
-    val = float(nums[0]) if nums else None
-    return val, currency
+    return parse_price(text)
 
 
 def _parse_features_text(text: str) -> Tuple[Optional[float], Optional[float], Optional[int]]:
@@ -440,17 +419,3 @@ def _parse_features_text(text: str) -> Tuple[Optional[float], Optional[float], O
     if m:
         ambientes = int(m.group(1))
     return covered, total, ambientes
-
-
-def _coerce_float(v) -> Optional[float]:
-    if v is None:
-        return None
-    try:
-        return float(str(v).replace(".", "").replace(",", ".").strip())
-    except (ValueError, TypeError):
-        return None
-
-
-def _coerce_int(v) -> Optional[int]:
-    f = _coerce_float(v)
-    return int(f) if f is not None else None
