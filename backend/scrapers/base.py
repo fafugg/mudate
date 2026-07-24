@@ -74,9 +74,15 @@ class BaseScraper(ABC):
 
 
 def coerce_float(v) -> Optional[float]:
-    """Convert a value to float, handling Argentine number formatting (dots → nothing, comma → dot)."""
+    """Convert a value to float, handling Argentine number formatting (dots → nothing, comma → dot).
+
+    If the value is already numeric (int/float), it is returned as-is without
+    the string-based formatting, which would corrupt standard decimal numbers.
+    """
     if v is None:
         return None
+    if isinstance(v, (int, float)):
+        return float(v)
     try:
         return float(str(v).replace(".", "").replace(",", ".").strip())
     except (ValueError, TypeError):
