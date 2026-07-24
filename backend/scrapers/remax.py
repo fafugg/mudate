@@ -33,6 +33,7 @@ TYPE_MAP = {
 }
 
 PAGE_SIZE = 24
+MAX_PAGES = 500
 
 
 class RemaxScraper(BaseScraper):
@@ -77,7 +78,7 @@ class RemaxScraper(BaseScraper):
             current_page = 0
             total_pages = 1
 
-            while current_page < total_pages:
+            while current_page < total_pages and current_page < MAX_PAGES:
                 if cancel_check and cancel_check():
                     break
 
@@ -91,6 +92,17 @@ class RemaxScraper(BaseScraper):
 
                 await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 await asyncio.sleep(3)
+
+                # Accept cookies if present
+                try:
+                    btn = await page.query_selector(
+                        'button:has-text("Acepto"), button:has-text("Aceptar"), button:has-text("OK")'
+                    )
+                    if btn:
+                        await btn.click()
+                        await asyncio.sleep(1)
+                except Exception:
+                    pass
 
                 # Extract ng-state JSON
                 ng_state = await page.evaluate(
@@ -182,7 +194,8 @@ class RemaxScraper(BaseScraper):
                     listings.append(parsed)
 
             return listings, total_pages
-        except Exception:
+        except Exception as e:
+            logger.error("REMAX ng-state parse error: %s: %s", type(e).__name__, e)
             return [], 1
 
 
@@ -224,6 +237,7 @@ def _parse_remax_listing(item: dict) -> Optional[Dict[str, Any]]:
         # M2
         covered_m2 = coerce_float(item.get("dimensionCovered"))
         total_m2 = coerce_float(item.get("dimensionTotalBuilt"))
+        land_m2 = coerce_float(item.get("dimensionLand"))
 
         # Expenses
         expenses = coerce_float(item.get("expensesPrice"))
@@ -291,10 +305,14 @@ def _parse_remax_listing(item: dict) -> Optional[Dict[str, Any]]:
             if len(coords) == 2:
                 lng, lat = coords[0], coords[1]
 
+        # Title
+        title = item.get("title", "")
+
         return {
             "search_engine_id": se_id,
             "_entity_id": entity_id,
             "type": prop_type,
+            "title": title,
             "ambientes": ambientes,
             "dormitorios": dormitorios,
             "banos": banos,
@@ -303,6 +321,7 @@ def _parse_remax_listing(item: dict) -> Optional[Dict[str, Any]]:
             "address": address,
             "covered_m2": covered_m2,
             "total_m2": total_m2,
+            "land_m2": land_m2,
             "expenses": expenses if expenses and expenses > 0 else None,
             "expenses_currency": expenses_currency if expenses and expenses > 0 else None,
             "real_estate": real_estate,
@@ -360,7 +379,7 @@ async def _fetch_detail_api(entity_id: str) -> Dict[str, Any]:
 
             # Toilets
             toilets = listing.get("toilets")
-            if toilets:
+            if toilets is not None:
                 result["toilettes"] = int(toilets)
 
             # Expenses
