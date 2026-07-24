@@ -212,8 +212,8 @@ def _parse_remax_listing(item: dict) -> Optional[Dict[str, Any]]:
 
         se_id = str(item_id) if item_id else ""
 
-        # Build detail URL
-        url = f"{BASE_URL}/propiedad/{entity_id}/{slug}" if entity_id and slug else ""
+        # Build detail URL - use /listings/{slug} format (not /propiedad/{entity_id}/{slug})
+        url = f"{BASE_URL}/listings/{slug}" if slug else ""
 
         # Price
         price = item.get("price")
