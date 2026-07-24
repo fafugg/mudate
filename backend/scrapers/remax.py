@@ -17,10 +17,19 @@ API_BASE = "https://api-ar.redremax.com/remaxweb-ar/api"
 REMAX_CDN = "https://d1acdg20u0pmxj.cloudfront.net/"
 
 TYPE_MAP = {
+    1: "Departamento",
+    2: "Departamento",
+    3: "Departamento",
+    4: "Departamento",
+    5: "Departamento",
     9: "Casa",
     10: "Casa",
     11: "Casa",
     12: "PH",
+    13: "Terreno",
+    14: "Local Comercial",
+    15: "Oficina",
+    16: "Cochera",
 }
 
 PAGE_SIZE = 24
@@ -30,14 +39,29 @@ class RemaxScraper(BaseScraper):
     BASE_URL = BASE_URL
 
     def _page_url(self, search_filter: str, page: int) -> str:
-        base = f"{BASE_URL}/listings/buy"
-        filter_str = search_filter.lstrip("?")
-        if "page=" in filter_str:
-            filter_str = re.sub(r"page=\d+", f"page={page}", filter_str)
+        """Build paginated URL from the user's search filter.
+
+        Handles three formats:
+        - Full URL: https://www.remax.com.ar/listings/buy?...
+        - Path with query: /listings/buy?page=0&...
+        - Query only: ?page=0&... (prepends /listings/buy)
+        """
+        # If search_filter already starts with http, use it directly
+        if search_filter.startswith("http"):
+            base_url = search_filter
+        elif search_filter.startswith("/"):
+            base_url = f"{BASE_URL}{search_filter}"
         else:
-            sep = "&" if "?" in filter_str else "?"
-            filter_str = f"{filter_str}{sep}page={page}"
-        return f"{base}?{filter_str}"
+            # Query-only filter (starts with ?) — prepend /listings/buy
+            base_url = f"{BASE_URL}/listings/buy{search_filter}"
+
+        # Replace or inject page parameter
+        if "page=" in base_url:
+            base_url = re.sub(r"page=\d+", f"page={page}", base_url)
+        else:
+            sep = "&" if "?" in base_url else "?"
+            base_url = f"{base_url}{sep}page={page}"
+        return base_url
 
     async def scrape_search(
         self,
@@ -352,7 +376,8 @@ async def _fetch_detail_api(entity_id: str) -> Dict[str, Any]:
                 amenities = []
                 for f in features:
                     if isinstance(f, dict):
-                        name = f.get("name") or f.get("label") or f.get("value") or ""
+                        # Remax API uses 'value' for the feature name
+                        name = f.get("value") or f.get("name") or f.get("label") or ""
                     elif isinstance(f, str):
                         name = f
                     else:
@@ -361,6 +386,23 @@ async def _fetch_detail_api(entity_id: str) -> Dict[str, Any]:
                         amenities.append(name)
                 if amenities:
                     result["amenities"] = amenities
+
+            # Property condition (API returns a list of condition objects)
+            conditions = listing.get("conditions")
+            if isinstance(conditions, list) and conditions:
+                cond_obj = conditions[0]
+                if isinstance(cond_obj, dict):
+                    cond_value = cond_obj.get("value", "")
+                    if cond_value:
+                        # Map Spanish condition values
+                        cond_map = {
+                            "muy_bueno": "Muy buen estado",
+                            "bueno": "Buen estado",
+                            "excelente": "Excelente estado",
+                            "regular": "Regular",
+                            "nuevo": "A estrenar",
+                        }
+                        result["condition"] = cond_map.get(cond_value, cond_value)
 
             # Photos (full resolution from detail API)
             photos = listing.get("photos", [])
