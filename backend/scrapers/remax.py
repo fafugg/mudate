@@ -42,11 +42,16 @@ class RemaxScraper(BaseScraper):
     def _page_url(self, search_filter: str, page: int) -> str:
         """Build paginated URL from the user's search filter.
 
-        Handles three formats:
+        Handles four formats:
         - Full URL: https://www.remax.com.ar/listings/buy?...
         - Path with query: /listings/buy?page=0&...
+        - Query with leading slash: /?page=0&... (strips /, prepends /listings/buy)
         - Query only: ?page=0&... (prepends /listings/buy)
         """
+        # Normalize: strip leading / if followed by ? (query string stored in DB)
+        if search_filter.startswith("/?"):
+            search_filter = search_filter[1:]  # Remove leading /
+
         # If search_filter already starts with http, use it directly
         if search_filter.startswith("http"):
             base_url = search_filter
