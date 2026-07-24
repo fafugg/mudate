@@ -312,5 +312,117 @@ async def main():
     print("Done.")
 
 
+# ── Image URL Format Tests ────────────────────────────────────────────────────
+
+def test_image_url_format():
+    """Verify Remax image URLs have correct format with resolution and .webp"""
+    from scrapers.remax import _parse_remax_listing
+
+    # Test with rawValue that needs resolution and extension
+    item = {
+        "id": 123,
+        "entityId": "test-entity-id",
+        "slug": "test-slug",
+        "photos": [{"rawValue": "listings/test-entity-id/abc123def456"}],
+        "price": 100000,
+        "currency": {"value": "USD"},
+        "displayAddress": "Test Address",
+        "type": {"id": 9, "value": "casa"},
+        "location": {"type": "Point", "coordinates": [-58.5, -34.5]},
+    }
+    result = _parse_remax_listing(item)
+    assert result is not None
+    assert len(result["images"]) == 1
+    img_url = result["images"][0]
+    print(f"  Test URL: {img_url}")
+    assert img_url == "https://d1acdg20u0pmxj.cloudfront.net/listings/test-entity-id/860x440/abc123def456.webp", f"Wrong URL format: {img_url}"
+    assert "860x440" in img_url, "Missing resolution"
+    assert img_url.endswith(".webp"), "Missing .webp extension"
+    print("  ✓ Image URL format test passed")
+
+
+def test_image_url_already_webp():
+    """Verify URLs that already have .webp are not double-processed"""
+    from scrapers.remax import _parse_remax_listing
+
+    item = {
+        "id": 124,
+        "entityId": "test-entity-id-2",
+        "slug": "test-slug-2",
+        "photos": [{"rawValue": "listings/test-entity-id-2/abc123.webp"}],
+        "price": 100000,
+        "currency": {"value": "USD"},
+        "displayAddress": "Test Address 2",
+        "type": {"id": 9, "value": "casa"},
+        "location": {"type": "Point", "coordinates": [-58.5, -34.5]},
+    }
+    result = _parse_remax_listing(item)
+    assert result is not None
+    img_url = result["images"][0]
+    print(f"  Test URL: {img_url}")
+    assert img_url.endswith(".webp"), "Missing .webp extension"
+    # Should not have double resolution
+    assert img_url.count("860x440") <= 1, "Double resolution"
+    print("  ✓ Already-webp URL test passed")
+
+
+def test_image_url_http():
+    """Verify HTTP URLs are passed through unchanged"""
+    from scrapers.remax import _parse_remax_listing
+
+    http_url = "https://example.com/image.jpg"
+    item = {
+        "id": 125,
+        "entityId": "test-entity-id-3",
+        "slug": "test-slug-3",
+        "photos": [{"rawValue": http_url}],
+        "price": 100000,
+        "currency": {"value": "USD"},
+        "displayAddress": "Test Address 3",
+        "type": {"id": 9, "value": "casa"},
+        "location": {"type": "Point", "coordinates": [-58.5, -34.5]},
+    }
+    result = _parse_remax_listing(item)
+    assert result is not None
+    img_url = result["images"][0]
+    print(f"  Test URL: {img_url}")
+    assert img_url == http_url, f"HTTP URL should be unchanged: {img_url}"
+    print("  ✓ HTTP URL passthrough test passed")
+
+
+async def test_images_accessible():
+    """Verify Remax image URLs return HTTP 200"""
+    import httpx
+
+    # Use a known working URL format
+    url = "https://d1acdg20u0pmxj.cloudfront.net/listings/409641de-0d7c-4111-ae0c-8e5ee596c5fb/860x440/4ad55a81-8529-46bf-80fd-55e3f5070b9b.webp"
+    print(f"  Testing URL: {url}")
+    async with httpx.AsyncClient() as client:
+        resp = await client.head(url, follow_redirects=True)
+        print(f"  HTTP status: {resp.status_code}")
+        assert resp.status_code == 200, f"Image not accessible: {resp.status_code}"
+        print("  ✓ Image accessibility test passed")
+
+
+def run_all_tests():
+    """Run all image URL tests"""
+    print(f"\n{'═'*72}")
+    print("  Image URL Tests")
+    print(f"{'═'*72}")
+
+    test_image_url_format()
+    test_image_url_already_webp()
+    test_image_url_http()
+    asyncio.run(test_images_accessible())
+
+    print(f"\n{'═'*72}")
+    print("  All image tests passed!")
+    print(f"{'═'*72}\n")
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    import sys
+    if "--test-images" in sys.argv:
+        run_all_tests()
+    else:
+        asyncio.run(main())

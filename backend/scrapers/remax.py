@@ -287,7 +287,8 @@ def _parse_remax_listing(item: dict) -> Optional[Dict[str, Any]]:
             except Exception:
                 published_at = str(created)[:10]
 
-        # Images
+        # Images - Remax rawValue is missing resolution and .webp extension
+        # Format: listings/{entity_id}/{hash} → listings/{entity_id}/860x440/{hash}.webp
         images = []
         photos = item.get("photos", [])
         if isinstance(photos, list):
@@ -298,7 +299,20 @@ def _parse_remax_listing(item: dict) -> Optional[Dict[str, Any]]:
                         if raw.startswith("http"):
                             images.append(raw)
                         else:
-                            images.append(f"{REMAX_CDN}{raw}")
+                            # Add resolution and .webp extension if missing
+                            # raw = "listings/{entity_id}/{hash}"
+                            # result = "{CDN}listings/{entity_id}/860x440/{hash}.webp"
+                            if not raw.endswith(".webp"):
+                                # Split into parts: ["listings", "{entity_id}", "{hash}"]
+                                parts = raw.split("/")
+                                if len(parts) >= 3:
+                                    entity_id_part = parts[1]
+                                    hash_part = parts[2]
+                                    images.append(f"{REMAX_CDN}listings/{entity_id_part}/860x440/{hash_part}.webp")
+                                else:
+                                    images.append(f"{REMAX_CDN}{raw}")
+                            else:
+                                images.append(f"{REMAX_CDN}{raw}")
         images = images[:40] if images else None
 
         # Lat/Lng
@@ -429,6 +443,7 @@ async def _fetch_detail_api(entity_id: str) -> Dict[str, Any]:
                         result["condition"] = cond_map.get(cond_value, cond_value)
 
             # Photos (full resolution from detail API)
+            # Remax rawValue is missing resolution and .webp extension
             photos = listing.get("photos", [])
             if isinstance(photos, list) and photos:
                 images = []
@@ -439,7 +454,17 @@ async def _fetch_detail_api(entity_id: str) -> Dict[str, Any]:
                             if raw.startswith("http"):
                                 images.append(raw)
                             else:
-                                images.append(f"{REMAX_CDN}{raw}")
+                                # Add resolution and .webp extension if missing
+                                if not raw.endswith(".webp"):
+                                    parts = raw.split("/")
+                                    if len(parts) >= 3:
+                                        entity_id_part = parts[1]
+                                        hash_part = parts[2]
+                                        images.append(f"{REMAX_CDN}listings/{entity_id_part}/860x440/{hash_part}.webp")
+                                    else:
+                                        images.append(f"{REMAX_CDN}{raw}")
+                                else:
+                                    images.append(f"{REMAX_CDN}{raw}")
                 if images:
                     result["images"] = images[:40]
 
