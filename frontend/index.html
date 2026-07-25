@@ -397,7 +397,7 @@
     </div>
 
     <!-- ── FILTER BAR ── -->
-    <div class="bg-white rounded-xl border border-slate-200 px-3 py-2 mb-3 flex flex-wrap items-center gap-2 shadow-sm relative z-20">
+    <div x-ref="filterBar" class="bg-white rounded-xl border border-slate-200 px-3 py-2 mb-3 flex flex-wrap items-center gap-2 shadow-sm relative z-20">
 
       <!-- Revisión dropdown -->
       <div class="relative shrink-0" x-data="{ open: false }" @click.away="open = false">
@@ -424,9 +424,9 @@
         </div>
       </div>
 
-      <!-- Filtros toggle: mobile only -->
+      <!-- Filtros toggle: shown when filter bar wraps to two rows -->
       <button @click="filtersOpen = !filtersOpen"
-        class="md:hidden flex items-center gap-1.5 text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 hover:border-slate-300 transition shrink-0 whitespace-nowrap">
+        class="flex items-center gap-1.5 text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 hover:border-slate-300 transition shrink-0 whitespace-nowrap">
         <svg class="w-3 h-3 transition-transform duration-200" :class="filtersOpen ? 'rotate-180' : ''"
           fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
           <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
@@ -437,8 +437,8 @@
           x-text="activeExtraFilters"></span>
       </button>
 
-      <!-- Extra filters: inline on desktop only -->
-      <div class="hidden md:flex md:items-center md:gap-2">
+      <!-- Extra filters: inline when filter bar fits on one row -->
+      <div x-show="!filterBarWraps" class="hidden md:flex md:items-center md:gap-2">
 
         <div class="relative shrink-0" x-data="{ open: false }" @click.away="open = false">
           <button @click="open = !open"
@@ -573,8 +573,8 @@
 
     </div>
 
-    <!-- Mobile extra filters row (shown below filter bar when toggled) -->
-    <div x-show="filtersOpen" x-transition class="md:hidden bg-white rounded-xl border border-slate-200 px-3 py-2 mb-3 flex flex-wrap items-center gap-2 shadow-sm">
+    <!-- Extra filters row (shown below filter bar when toggled on mobile or when wrapping) -->
+    <div x-show="filtersOpen && filterBarWraps" x-transition class="bg-white rounded-xl border border-slate-200 px-3 py-2 mb-3 flex flex-wrap items-center gap-2 shadow-sm">
       <div class="relative shrink-0" x-data="{ open: false }" @click.away="open = false">
         <button @click="open = !open" class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-blue-400 whitespace-nowrap">
           <span>Tipo</span>
@@ -1345,6 +1345,7 @@ function app() {
     filterPriceChange: false,
     filterNotes: '',
     filtersOpen: false,
+    filterBarWraps: false,
     mobileInfoOpen: true,
     sortBy: 'search_engine_id',
     sortDir: 'asc',
@@ -1578,6 +1579,18 @@ function app() {
       window.addEventListener('resize', onResize);
       // visualViewport fires on mobile when the browser toolbar appears/disappears
       window.visualViewport?.addEventListener('resize', onResize);
+
+      // Watch filter bar for wrapping (show collapse button when > 1 row)
+      this.$nextTick(() => {
+        const filterBar = this.$refs.filterBar;
+        if (filterBar) {
+          const observer = new ResizeObserver(() => {
+            // Single row height is approximately 44px (py-2 + content + gap)
+            this.filterBarWraps = filterBar.scrollHeight > 50;
+          });
+          observer.observe(filterBar);
+        }
+      });
 
       const redraw = () => {
         clearTimeout(this._redrawTimer);
