@@ -1581,12 +1581,19 @@ function app() {
       window.visualViewport?.addEventListener('resize', onResize);
 
       // Watch filter bar for wrapping (show collapse button when > 1 row)
+      // Uses hysteresis to prevent flickering at the threshold
       this.$nextTick(() => {
         const filterBar = this.$refs.filterBar;
         if (filterBar) {
           const observer = new ResizeObserver(() => {
-            // Single row height is approximately 44px (py-2 + content + gap)
-            this.filterBarWraps = filterBar.scrollHeight > 50;
+            const h = filterBar.scrollHeight;
+            if (this.filterBarWraps) {
+              // Only un-wrap if height drops significantly below single row
+              this.filterBarWraps = h > 40;
+            } else {
+              // Only wrap if height exceeds single row by a margin
+              this.filterBarWraps = h > 60;
+            }
           });
           observer.observe(filterBar);
         }
