@@ -14,12 +14,12 @@ class ArgenpropScraper(BaseScraper):
     BASE_URL = BASE_URL
 
     def _page_url(self, search_filter: str, page: int) -> str:
-        """Argenprop uses ?pagina=N query param."""
+        """Argenprop uses ?pagina-N (dash) query param."""
         base = f"{BASE_URL}{search_filter}"
         if page <= 1:
             return base
         sep = "&" if "?" in search_filter else "?"
-        return f"{base}{sep}pagina={page}"
+        return f"{base}{sep}pagina-{page}"
 
     async def scrape_search(
         self,
@@ -164,7 +164,7 @@ async def _extract_cards_js(page) -> list:
             // Images (data-src for lazy loaded, src for first)
             const images = [...card.querySelectorAll('img')].map(i =>
                 i.getAttribute('data-src') || i.src || ''
-            ).filter(s => s && s.startsWith('http') && !s.endsWith('.svg'));
+            ).filter(s => s && s.startsWith('http') && !s.endsWith('.svg') && !s.includes('_a/'));
 
             return {
                 id,
@@ -188,6 +188,10 @@ async def _extract_cards_js(page) -> list:
 async def _extract_total_pages(page) -> int:
     """Extract total pages from pagination element."""
     try:
+        await page.wait_for_selector('.pagination', timeout=5000)
+    except Exception:
+        return 1
+    try:
         total = await page.evaluate(r"""() => {
             const spans = document.querySelectorAll('.pagination__page span[data-link-href]');
             let maxPage = 1;
@@ -202,7 +206,8 @@ async def _extract_total_pages(page) -> int:
             return maxPage;
         }""")
         return total
-    except Exception:
+    except Exception as e:
+        logger.warning("AP pagination extraction failed: %s", e)
         return 1
 
 
@@ -370,7 +375,7 @@ async def _extract_detail_from_dom(page) -> Dict[str, Any]:
             const imgs = [];
             document.querySelectorAll('img').forEach(i => {
                 const src = i.src || i.getAttribute('data-src') || '';
-                if (src.startsWith('http') && !src.endsWith('.svg') && src.includes('static-content')) {
+                if (src.startsWith('http') && !src.endsWith('.svg') && src.includes('static-content') && !src.includes('_a/')) {
                     if (!imgs.includes(src)) imgs.push(src);
                 }
             });
