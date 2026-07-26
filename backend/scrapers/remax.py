@@ -340,7 +340,6 @@ def _parse_remax_listing(item: dict) -> Optional[Dict[str, Any]]:
             "address": address,
             "covered_m2": covered_m2,
             "total_m2": total_m2,
-            "land_m2": land_m2,
             "expenses": expenses if expenses and expenses > 0 else None,
             "expenses_currency": expenses_currency if expenses and expenses > 0 else None,
             "real_estate": real_estate,
