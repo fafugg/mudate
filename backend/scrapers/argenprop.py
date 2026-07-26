@@ -1,9 +1,9 @@
 import asyncio
 import logging
 import re
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set
 
-from .base import BaseScraper, UA, coerce_float, coerce_int, parse_price
+from .base import BaseScraper, UA, coerce_float, coerce_int
 
 logger = logging.getLogger(__name__)
 
@@ -305,16 +305,15 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
         if ld_data:
             result.update(_parse_ld_data(ld_data))
 
-        # DOM fallbacks for fields not in ld+json
+        # DOM values override ld+json (DOM is more detailed)
         dom_result = await _extract_detail_from_dom(page)
         for k, v in dom_result.items():
             if v is not None:
-                # For images, merge with existing (ld+json may have 1, DOM may have more)
                 if k == "images" and k in result and isinstance(v, list) and isinstance(result[k], list):
                     for img in v:
                         if img not in result[k]:
                             result[k].append(img)
-                elif k not in result:
+                else:
                     result[k] = v
 
         return result
@@ -366,85 +365,142 @@ def _parse_ld_data(data: dict) -> Dict[str, Any]:
 
 
 async def _extract_detail_from_dom(page) -> Dict[str, Any]:
-    """Extract additional fields from the detail page DOM."""
+    """Extract fields from the detail page DOM."""
     result: Dict[str, Any] = {}
 
     try:
-        # Images from gallery
-        imgs = await page.evaluate("""() => {
+        # ── Structured extraction via JS ─────────────────────────────────
+        data = await page.evaluate(r"""() => {
+            const r = {};
+
+            // ── Images from gallery (CSS background-image in data-open-gallery divs)
             const imgs = [];
-            document.querySelectorAll('img').forEach(i => {
-                const src = i.src || i.getAttribute('data-src') || '';
-                if (src.startsWith('http') && !src.endsWith('.svg') && src.includes('static-content') && !src.includes('_a/')) {
-                    if (!imgs.includes(src)) imgs.push(src);
+            document.querySelectorAll('[data-open-gallery] div[style]').forEach(div => {
+                const style = div.getAttribute('style') || '';
+                const m = style.match(/url\((https?:\/\/[^)]+)\)/);
+                if (m) {
+                    const src = m[1];
+                    if (src.includes('static-content') && !src.includes('_a/') && !src.includes('photo_placeholder')) {
+                        if (!imgs.includes(src)) imgs.push(src);
+                    }
                 }
             });
-            return imgs.slice(0, 40);
-        }""")
-        if imgs:
-            result["images"] = imgs
+            // Fallback: check ld+json images if gallery extraction yields nothing
+            if (imgs.length === 0) {
+                document.querySelectorAll('img').forEach(i => {
+                    const src = i.src || i.getAttribute('data-src') || '';
+                    if (src.startsWith('http') && src.includes('static-content') && !src.includes('_a/') && !src.includes('similar')) {
+                        if (!imgs.includes(src)) imgs.push(src);
+                    }
+                });
+            }
+            r.images = imgs.slice(0, 40);
 
-        # Features/amenities from page text
-        features = await page.evaluate("""() => {
-            const items = [];
-            document.querySelectorAll('li, [class*="feature-item"], [class*="amenity"]').forEach(el => {
-                const t = el.textContent.trim();
-                if (t.length > 2 && t.length < 80 && !items.includes(t)) {
-                    items.push(t);
-                }
+            // ── Property specs from main features ─────────────────────────
+            const mainFeatures = {};
+            document.querySelectorAll('.property-main-features li[title]').forEach(li => {
+                const title = li.getAttribute('title');
+                const text = (li.querySelector('.strong') || li.querySelector('p')).textContent.trim();
+                mainFeatures[title] = text;
             });
-            return items.slice(0, 30);
+
+            // Helper: extract first number from text like "250 m² Cubierta"
+            function num(text) {
+                if (!text) return null;
+                const m = text.match(/\d[\d.,]*/);
+                if (!m) return null;
+                return parseFloat(m[0].replace(',', '.'));
+            }
+
+            // Map property-main-features to fields
+            if (mainFeatures['Sup. cubierta']) r.covered_m2 = num(mainFeatures['Sup. cubierta']);
+            if (mainFeatures['Sup. terreno']) r.total_m2 = num(mainFeatures['Sup. terreno']);
+            if (mainFeatures['Dormitorios']) r.dormitorios = num(mainFeatures['Dormitorios']);
+            if (mainFeatures['Baños']) r.banos = num(mainFeatures['Baños']);
+            if (mainFeatures['Ambientes']) r.ambientes = num(mainFeatures['Ambientes']);
+            if (mainFeatures['Cocheras']) r.parking = num(mainFeatures['Cocheras']) > 0;
+            if (mainFeatures['Toilettes']) r.toilettes = num(mainFeatures['Toilettes']);
+            if (mainFeatures['Antigüedad']) r.age_years = num(mainFeatures['Antigüedad']);
+            if (mainFeatures['Estado']) r.condition = mainFeatures['Estado'];
+            if (mainFeatures['Orientación']) r.orientation = mainFeatures['Orientación'];
+
+            // section-caracteristicas: extract Cant. Plantas for floor
+            document.querySelectorAll('#section-caracteristicas li h3').forEach(h3 => {
+                const text = h3.textContent.trim();
+                const m = text.match(/Cant\.\s*Plantas:\s*(\d+)/);
+                if (m) r.floor = m[1];
+            });
+
+            // ── Surface area fallbacks from section-superficie ───────────
+            document.querySelectorAll('#section-superficie li h3').forEach(h3 => {
+                const text = h3.textContent.trim();
+                const val = num(text);
+                if (val === null) return;
+                if (text.includes('Sup. Cubierta') && !r.covered_m2) r.covered_m2 = val;
+                if (text.includes('Sup. Terreno') && !r.total_m2) r.total_m2 = val;
+                if (text.includes('Sup. Total')) r.total_m2 = val;
+            });
+
+            // ── Location from map data attributes ─────────────────────────
+            const map = document.querySelector('.leaflet-container');
+            if (map) {
+                const lat = map.getAttribute('data-latitude');
+                const lng = map.getAttribute('data-longitude');
+                if (lat) r.lat = parseFloat(lat.replace(',', '.'));
+                if (lng) r.lng = parseFloat(lng.replace(',', '.'));
+            }
+
+            // ── Amenities from ambientes/instalaciones/servicios sections ─
+            const amenities = [];
+            ['section-ambientes-casa', 'section-instalaciones-casa', 'section-servicios-casa'].forEach(id => {
+                document.querySelectorAll('#' + id + ' li.property-features-item h3').forEach(h3 => {
+                    const t = h3.textContent.trim();
+                    if (t && !amenities.includes(t)) amenities.push(t);
+                });
+            });
+            r.amenities = amenities;
+
+            // ── Publisher and contact info ────────────────────────────────
+            const pubEl = document.querySelector('#avisos-anunciante-sup, .form-details-heading a');
+            if (pubEl) r.real_estate = pubEl.textContent.trim();
+
+            // Phone
+            const phoneEl = document.querySelector('.form-detail-phone-number');
+            if (phoneEl) r.real_estate_phone = phoneEl.textContent.trim();
+
+            return r;
         }""")
-        # Filter: only keep items that look like actual amenities/property features
-        amenity_keywords = [
-            "m²", "dorm", "amb", "baño", "coch", "año", "pisc", "pileta",
-            "jardín", "jardin", "parrilla", "gimnasio", "seguridad", "ascensor",
-            "aire", "calefacción", "calefaccion", "amueblado", "balcón", "balcon",
-            "terraza", "patio", "lavadero", "quincho", "playroom", "sum",
-            "alarma", "cámara", "camara", "gated", "cerrado", "service",
-        ]
-        # Exclude items that are clearly navigation/breadcrumbs or questions
-        nav_patterns = [
-            "emprendimientos", "countries", "barrios cerrados", "garantías",
-            "noticias", "publicar", "argenprop", "venta", "alquiler",
-            "¿cuántos", "¿cuántas", "ver más", "ver todas",
-        ]
-        result["amenities"] = [
-            f for f in features
-            if any(kw in f.lower() for kw in amenity_keywords)
-            and not any(nav in f.lower() for nav in nav_patterns)
-            and "?" not in f
-        ]
 
-        # Expenses
-        exp_el = await page.query_selector("[class*='expense'], [class*='expensa']")
-        if exp_el:
-            exp_text = (await exp_el.inner_text()).strip()
-            val, curr = parse_price(exp_text)
-            if val:
-                result["expenses"] = val
-                result["expenses_currency"] = curr
+        if data:
+            # Images
+            if data.get("images"):
+                result["images"] = data["images"]
 
-        # Publisher/real estate
-        pub_el = await page.query_selector(
-            "[class*='publisher'] [class*='name'], [class*='inmobiliaria']"
-        )
-        if pub_el:
-            result["real_estate"] = (await pub_el.inner_text()).strip()
+            # Property fields
+            for key in ["covered_m2", "total_m2", "dormitorios", "banos",
+                        "ambientes", "parking", "toilettes", "age_years", "condition",
+                        "orientation", "floor", "lat", "lng"]:
+                if data.get(key) is not None:
+                    result[key] = data[key]
 
-        # Phone
-        phone_el = await page.query_selector("[href*='tel:']")
-        if phone_el:
-            href = await phone_el.get_attribute("href") or ""
-            result["real_estate_phone"] = href.replace("tel:", "").strip() or None
+            # Amenities
+            if data.get("amenities"):
+                result["amenities"] = data["amenities"]
+
+            # Publisher
+            if data.get("real_estate"):
+                result["real_estate"] = data["real_estate"]
+            if data.get("real_estate_phone"):
+                result["real_estate_phone"] = data["real_estate_phone"]
+
+        # ── Description (separate, uses innerText for line breaks) ────────
+        desc_el = await page.query_selector('.section-description--content')
+        if desc_el:
+            desc_text = (await desc_el.inner_text()).strip()
+            if desc_text:
+                result["description"] = desc_text[:2000]
 
     except Exception as e:
         logger.error("AP DOM extraction error: %s: %s", type(e).__name__, e)
 
     return result
-
-
-# ── Helpers ─────────────────────────────────────────────────────────────────
-
-def _parse_price_text(text: str) -> Tuple[Optional[float], str]:
-    return parse_price(text)
