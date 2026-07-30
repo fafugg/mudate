@@ -19,7 +19,7 @@ function app() {
     runStatus: null,
     runDismissed: false,
     _pollInterval: null,
-    filterReview: ['', 'en_duda', 'interesante', 'descartada', 'contactar'],
+    filterReview: ['', 'en_duda', 'interesante', 'contactar', 'descartada'],
     filterStatus: [],
     filterType: [],
     filterMinPrice: '',
@@ -390,7 +390,7 @@ function app() {
 
     async goBack() {
       this.stopGeocoding();
-      this.filterReview = ['', 'en_duda', 'interesante', 'descartada', 'contactar'];
+      this.filterReview = ['', 'en_duda', 'interesante', 'contactar', 'descartada'];
       this.filterType = [];
       this.filterStatus = [];
       this.filterMinPrice = '';
@@ -444,7 +444,7 @@ function app() {
           this.startPolling();
         }
         this.tablePage = 1;
-        this.filterReview = ['', 'en_duda', 'interesante', 'descartada', 'contactar'];
+        this.filterReview = ['', 'en_duda', 'interesante', 'contactar', 'descartada'];
         this.filterType = [];
         this.filterStatus = [];
         this.filterMinPrice = '';

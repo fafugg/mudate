@@ -71,11 +71,11 @@ def _pick_keep(houses: List[dict], sources: List[dict]) -> dict:
 
 
 _REVIEW_PRIORITY = {
-    "contactar": 0,
-    "interesante": 1,
-    "en_duda": 2,
     "": 3,
     None: 3,
+    "en_duda": 2,
+    "interesante": 1,
+    "contactar": 0,
     "descartada": 4,
     "duplicado": 5,
 }

@@ -63,7 +63,7 @@ class HouseDict(TypedDict, total=False):
     # Status & tracking
     status: str  # "active" | "removed"
     removed_at: Optional[str]
-    review: Optional[str]  # "" | "en_duda" | "interesante" | "descartada" | "contactar"
+    review: Optional[str]  # "" | "en_duda" | "interesante" | "contactar" | "descartada" | "duplicado"
     notes: Optional[str]
     # Timestamps & history
     created_at: str
@@ -94,7 +94,7 @@ class UpdateSessionRequest(BaseModel):
 
 class UpdateHouseRequest(BaseModel):
     """Request body for updating a house's review, notes, or manual address."""
-    review: Optional[str] = Field(None, description="Review status: '', en_duda, interesante, descartada, contactar")
+    review: Optional[str] = Field(None, description="Review status: '', en_duda, interesante, contactar, descartada, duplicado")
     notes: Optional[str] = Field(None, description="Free-text notes about the property")
     manual_address: Optional[str] = Field(None, description="Manually corrected address for geocoding")
 

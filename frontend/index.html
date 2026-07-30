@@ -663,12 +663,12 @@
       <select @change="batchSetReview($event.target.value); $event.target.value = ''"
         class="text-xs border border-blue-300 dark:border-blue-700 rounded-lg px-2 py-1 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-400">
         <option value="">Seleccionar...</option>
+        <option value="">A revisar</option>
         <option value="en_duda">En duda</option>
         <option value="interesante">Interesante</option>
-        <option value="descartada">Descartada</option>
         <option value="contactar">Contactar</option>
+        <option value="descartada">Descartada</option>
         <option value="duplicado">Duplicado</option>
-        <option value="">A revisar</option>
       </select>
       <button @click="openCompare()" class="text-xs bg-white dark:bg-slate-800 border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 px-3 py-1 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/50 transition font-medium">Comparar</button>
       <button @click="selectedHouses = []" class="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 ml-auto">Limpiar</button>
@@ -725,8 +725,8 @@
                   <option value="">A revisar</option>
                   <option value="en_duda">En duda</option>
                   <option value="interesante">Interesante</option>
-                  <option value="descartada">Descartada</option>
                   <option value="contactar">Contactar</option>
+                  <option value="descartada">Descartada</option>
                   <option value="duplicado">Duplicado</option>
                 </select>
               </td>
@@ -807,8 +807,8 @@
                 <option value="">A revisar</option>
                 <option value="en_duda">En duda</option>
                 <option value="interesante">Interesante</option>
-                <option value="descartada">Descartada</option>
                 <option value="contactar">Contactar</option>
+                <option value="descartada">Descartada</option>
                 <option value="duplicado">Duplicado</option>
               </select>
             </div>
@@ -1144,8 +1144,8 @@
             <option value="">A revisar</option>
             <option value="en_duda">En duda</option>
             <option value="interesante">Interesante</option>
-            <option value="descartada">Descartada</option>
             <option value="contactar">Contactar</option>
+            <option value="descartada">Descartada</option>
             <option value="duplicado">Duplicado</option>
           </select>
         </div>

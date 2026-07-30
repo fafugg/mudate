@@ -3,8 +3,8 @@ const REVIEW_OPTIONS = [
   { value: '',         label: 'A revisar',    cls: 'bg-gray-100 text-gray-600' },
   { value: 'en_duda',     label: 'En duda',     cls: 'bg-yellow-100 text-yellow-800' },
   { value: 'interesante', label: 'Interesante',  cls: 'bg-blue-100 text-blue-800' },
-  { value: 'descartada',  label: 'Descartada',   cls: 'bg-orange-100 text-orange-800' },
   { value: 'contactar',   label: 'Contactar',    cls: 'bg-green-100 text-green-800' },
+  { value: 'descartada',  label: 'Descartada',   cls: 'bg-orange-100 text-orange-800' },
   { value: 'duplicado',   label: 'Duplicado',    cls: 'bg-red-100 text-red-800' },
 ];
 
@@ -48,8 +48,8 @@ const MAP_LEGEND = [
   { label: 'Sin revisión', color: '#64748b' },
   { label: 'En duda',      color: '#f59e0b' },
   { label: 'Interesante',  color: '#3b82f6' },
-  { label: 'Descartada',   color: '#f97316' },
   { label: 'Contactar',    color: '#22c55e' },
+  { label: 'Descartada',   color: '#f97316' },
   { label: 'Duplicado',    color: '#ef4444' },
   { label: 'Removida',     color: '#cbd5e1' },
 ];
