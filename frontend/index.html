@@ -192,6 +192,13 @@
               </svg>
               Copiar links
             </button>
+            <button @click="openDedupModal(); actionsOpen = false"
+              class="w-full text-left text-xs px-4 py-2.5 hover:bg-slate-50 text-slate-700 flex items-center gap-2.5">
+              <svg class="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Deduplicar propiedades
+            </button>
             <div class="border-t border-slate-100 my-1"></div>
             <button @click="showManualAddressModal = true; actionsOpen = false"
               class="w-full text-left text-xs px-4 py-2.5 hover:bg-slate-50 text-slate-700 flex items-center gap-2.5">
@@ -660,6 +667,7 @@
         <option value="interesante">Interesante</option>
         <option value="descartada">Descartada</option>
         <option value="contactar">Contactar</option>
+        <option value="duplicado">Duplicado</option>
         <option value="">A revisar</option>
       </select>
       <button @click="openCompare()" class="text-xs bg-white dark:bg-slate-800 border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 px-3 py-1 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/50 transition font-medium">Comparar</button>
@@ -719,6 +727,7 @@
                   <option value="interesante">Interesante</option>
                   <option value="descartada">Descartada</option>
                   <option value="contactar">Contactar</option>
+                  <option value="duplicado">Duplicado</option>
                 </select>
               </td>
               <td x-show="visibleColumns.info" class="px-3 py-2 text-center">
@@ -800,6 +809,7 @@
                 <option value="interesante">Interesante</option>
                 <option value="descartada">Descartada</option>
                 <option value="contactar">Contactar</option>
+                <option value="duplicado">Duplicado</option>
               </select>
             </div>
             <div class="text-right">
@@ -1136,6 +1146,7 @@
             <option value="interesante">Interesante</option>
             <option value="descartada">Descartada</option>
             <option value="contactar">Contactar</option>
+            <option value="duplicado">Duplicado</option>
           </select>
         </div>
         <div class="flex items-center gap-2">
@@ -1536,6 +1547,101 @@
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Deduplication modal -->
+  <div x-show="dedupGroups.length > 0" x-cloak x-transition.opacity x-effect="document.body.style.overflow = dedupGroups.length > 0 ? 'hidden' : ''"
+    class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[3500] p-4"
+    @click.self="closeDedupModal()" @keydown.escape.window="closeDedupModal()">
+    <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700 shrink-0">
+        <h3 class="font-bold text-slate-800 dark:text-slate-100">Propiedades duplicadas</h3>
+        <button @click="closeDedupModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xl">&times;</button>
+      </div>
+      <div class="overflow-auto flex-1 p-4 space-y-3 relative">
+        <div class="flex items-center gap-2 mb-2">
+          <label class="flex items-center gap-1.5 cursor-pointer text-xs text-slate-500 dark:text-slate-400 select-none">
+            <input type="checkbox" :checked="dedupAllChecked" @change="toggleAllDedupGroups()"
+              class="rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500">
+            <span x-text="`Seleccionar todos (${selectedDedupGroups.filter(Boolean).length}/${dedupGroups.length})`"></span>
+          </label>
+        </div>
+        <p class="text-xs text-slate-500 dark:text-slate-400 mb-2">
+          Se conservará la del primer provider en el orden de búsqueda. Las demás se marcarán como "Duplicado" y se fusionarán sus notas.
+        </p>
+        <div x-show="dedupLoading" class="absolute inset-0 bg-white/70 dark:bg-slate-800/70 z-10 flex items-center justify-center rounded-b-2xl">
+          <svg class="animate-spin h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+          </svg>
+        </div>
+        <template x-for="(group, gi) in dedupGroups" :key="gi">
+          <div class="border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800/50 overflow-hidden"
+            :class="selectedDedupGroups[gi] === false ? 'opacity-50' : ''">
+            <div class="px-4 py-2 bg-slate-100 dark:bg-slate-700/50 border-b border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-2">
+              <label class="flex items-center cursor-pointer">
+                <input type="checkbox" x-model="selectedDedupGroups[gi]"
+                  class="rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500">
+              </label>
+              <span>Grupo <span x-text="gi + 1"></span></span>
+              <span class="font-normal text-slate-400" x-text="`(${group.houses.length} propiedades)`"></span>
+            </div>
+            <table class="w-full text-xs">
+              <thead>
+                <tr class="border-b border-slate-200 dark:border-slate-700 text-slate-500">
+                  <th class="text-left px-4 py-1.5 font-medium">Provider</th>
+                  <th class="text-left px-4 py-1.5 font-medium">Dirección</th>
+                  <th class="text-right px-4 py-1.5 font-medium">Precio</th>
+                  <th class="text-right px-4 py-1.5 font-medium">m²</th>
+                  <th class="text-center px-4 py-1.5 font-medium">Revisión</th>
+                  <th class="text-center px-4 py-1.5 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="(h, hi) in group.houses" :key="h.internal_id">
+                  <tr class="border-b border-slate-100 dark:border-slate-700/50" :class="h.internal_id === group.keep_id ? 'bg-green-50 dark:bg-green-900/20' : ''">
+                    <td class="px-4 py-2">
+                      <span class="px-1.5 py-0.5 rounded text-[10px] font-medium"
+                        :class="{'bg-purple-100 text-purple-700': h.search_engine === 'zonaprop', 'bg-orange-100 text-orange-700': h.search_engine === 'argenprop', 'bg-yellow-100 text-yellow-700': h.search_engine === 'mercadolibre', 'bg-blue-100 text-blue-700': h.search_engine === 'remax'}"
+                        x-text="ENGINE_LABELS[h.search_engine] || h.search_engine"></span>
+                    </td>
+                    <td class="px-4 py-2 text-slate-700 dark:text-slate-200 truncate max-w-[180px]" x-text="h.address || '—'"></td>
+                    <td class="px-4 py-2 text-right text-slate-700 dark:text-slate-200 whitespace-nowrap" x-text="formatPrice(h.price, h.currency)"></td>
+                    <td class="px-4 py-2 text-right text-slate-700 dark:text-slate-200" x-text="h.total_m2 || h.covered_m2 || '—'"></td>
+                    <td class="px-4 py-2 text-center">
+                      <span class="px-1.5 py-0.5 rounded text-[10px] font-medium"
+                        :class="reviewClass(h.review)"
+                        x-text="REVIEW_OPTIONS.find(r => r.value === (h.review || ''))?.label || 'A revisar'"></span>
+                    </td>
+                    <td class="px-4 py-2 text-center">
+                      <span x-show="h.internal_id === group.keep_id"
+                        class="text-[10px] font-semibold text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/40 px-1.5 py-0.5 rounded">Conservar</span>
+                      <span x-show="h.internal_id !== group.keep_id"
+                        class="text-[10px] text-red-500">Duplicado</span>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </template>
+      </div>
+      <div class="flex items-center justify-end gap-2 px-6 py-4 border-t border-slate-200 dark:border-slate-700 shrink-0">
+        <button @click="closeDedupModal()"
+          class="px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition">Cancelar</button>
+        <span x-show="dedupLoading" class="flex items-center gap-1.5 text-xs text-slate-400">
+          <svg class="animate-spin h-3.5 w-3.5 text-blue-600" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+          </svg>
+          Procesando…
+        </span>
+        <button @click="confirmDedup()" :disabled="dedupLoading"
+          class="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition">
+          Confirmar deduplicación
+        </button>
       </div>
     </div>
   </div>

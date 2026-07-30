@@ -169,6 +169,41 @@ class OkResponse(BaseModel):
     ok: bool = True
 
 
+class DupHouseInfo(BaseModel):
+    """A house within a duplicate group."""
+    internal_id: str
+    search_engine: str
+    address: Optional[str] = None
+    price: Optional[float] = None
+    currency: str = "USD"
+    total_m2: Optional[float] = None
+    covered_m2: Optional[float] = None
+    review: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class DupGroupResponse(BaseModel):
+    """A group of duplicate houses."""
+    keep_id: str
+    keep_engine: str
+    houses: List[DupHouseInfo] = []
+
+
+class DedupPreviewResponse(BaseModel):
+    """Response for deduplicate/preview."""
+    groups: List[DupGroupResponse] = []
+
+
+class DedupApplyRequest(BaseModel):
+    """Request body for deduplicate/apply — optionally select which groups to process."""
+    selected_groups: Optional[List[int]] = Field(None, description="Indices of groups to deduplicate (default: all)")
+
+
+class DedupApplyResponse(BaseModel):
+    """Response for deduplicate/apply."""
+    removed_count: int = 0
+
+
 class ErrorResponse(BaseModel):
     """Error response."""
     detail: str

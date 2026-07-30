@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,8 +19,14 @@ from pydantic import BaseModel
 
 from geocoding_tasks import run_geocode
 from scheduler import get_scheduler_status, setup_scheduler
+from deduplicator import apply_dedup, find_duplicates
 from schemas import (
     CreateSessionRequest,
+    DedupApplyRequest,
+    DedupApplyResponse,
+    DedupPreviewResponse,
+    DupGroupResponse,
+    DupHouseInfo,
     ErrorResponse,
     GeocodeResponse,
     OkResponse,
@@ -292,6 +298,35 @@ async def geocode_session(
     )
     background_tasks.add_task(run_geocode, house_ids=needs_api, run_id=run_id, runs=runs)
     return {"run_id": run_id, "already_done": False}
+
+
+# ── Deduplication ────────────────────────────────────────────────────────────────────────────────
+
+@app.post("/api/users/{username}/sessions/{session_id}/deduplicate/preview", response_model=DedupPreviewResponse)
+async def dedup_preview(username: str, session_id: str):
+    """Encuentra propiedades duplicadas en la sesión usando fuzzy matching."""
+    username = _validate_username(username)
+    db = read_db()
+    session = _session_or_404(db, username, session_id)
+    groups = find_duplicates(session, username)
+    return {"groups": groups}
+
+
+@app.post("/api/users/{username}/sessions/{session_id}/deduplicate/apply", response_model=DedupApplyResponse)
+async def dedup_apply(username: str, session_id: str, body: DedupApplyRequest = Body(default_factory=DedupApplyRequest)):
+    """Elimina propiedades duplicadas de la sesión, manteniendo la del primer provider."""
+    username = _validate_username(username)
+    db = read_db()
+    session = _session_or_404(db, username, session_id)
+    all_groups = find_duplicates(session, username)
+    if body.selected_groups is not None:
+        groups = [all_groups[i] for i in body.selected_groups if 0 <= i < len(all_groups)]
+    else:
+        groups = all_groups
+    if not groups:
+        return {"removed_count": 0}
+    removed = apply_dedup(session, username, groups)
+    return {"removed_count": removed}
 
 
 # ── DB export ────────────────────────────────────────────────────────────────

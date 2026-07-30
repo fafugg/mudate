@@ -19,7 +19,7 @@ function app() {
     runStatus: null,
     runDismissed: false,
     _pollInterval: null,
-    filterReview: [],
+    filterReview: ['', 'en_duda', 'interesante', 'descartada', 'contactar'],
     filterStatus: [],
     filterType: [],
     filterMinPrice: '',
@@ -66,6 +66,9 @@ function app() {
     _savingAddressId: null,
     _savedAddressId: null,
     editingModalAddress: false,
+    dedupGroups: [],
+    dedupLoading: false,
+    selectedDedupGroups: [],
 
     // ── Spread map state & methods ───────────────────────────────────────────
     ...mapMethods,
@@ -99,6 +102,10 @@ function app() {
       return [...engines].sort();
     },
 
+    get dedupAllChecked() {
+      return this.selectedDedupGroups.length > 0 && this.selectedDedupGroups.every(Boolean);
+    },
+
     _norm(s) {
       return (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
     },
@@ -107,14 +114,24 @@ function app() {
       let list = [...this.houses];
       if (this.filterStatus.length > 0) list = list.filter(h => this.filterStatus.includes(h.status));
       if (this.filterType.length > 0) list = list.filter(h => this.filterType.includes(h.type));
-      if (this.filterReview.length > 0 && this.filterReview.length < REVIEW_OPTIONS.length) {
+      if (this.filterReview.length > 0) {
         list = list.filter(h => this.filterReview.includes(h.review || ''));
       }
       if (this.filterMinPrice) list = list.filter(h => h.price && h.price >= parseFloat(this.filterMinPrice));
       if (this.filterMaxPrice) list = list.filter(h => !h.price || h.price <= parseFloat(this.filterMaxPrice));
       if (this.filterAddress) {
-        const q = this._norm(this.filterAddress);
-        list = list.filter(h => this._norm(h.manual_address || h.address).includes(q));
+        const tokens = this._norm(this.filterAddress).split(/\s+/).filter(Boolean);
+        list = list.filter(h => {
+          const addr = this._norm(h.manual_address || h.address);
+          const addrTokens = addr.split(/\s+/).filter(Boolean);
+          return tokens.every(qt => addrTokens.some(at => {
+            if (qt.includes('%')) {
+              const escaped = qt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*');
+              return new RegExp('^' + escaped + '$').test(at);
+            }
+            return at.includes(qt);
+          }));
+        });
       }
       if (this.filterRealEstate) {
         const q = this._norm(this.filterRealEstate);
@@ -373,7 +390,7 @@ function app() {
 
     async goBack() {
       this.stopGeocoding();
-      this.filterReview = [];
+      this.filterReview = ['', 'en_duda', 'interesante', 'descartada', 'contactar'];
       this.filterType = [];
       this.filterStatus = [];
       this.filterMinPrice = '';
@@ -427,7 +444,7 @@ function app() {
           this.startPolling();
         }
         this.tablePage = 1;
-        this.filterReview = [];
+        this.filterReview = ['', 'en_duda', 'interesante', 'descartada', 'contactar'];
         this.filterType = [];
         this.filterStatus = [];
         this.filterMinPrice = '';
@@ -835,6 +852,50 @@ function app() {
           } catch (e) { this.showToast('Error al borrar los datos de geo.', 'error'); }
         }
       );
+    },
+
+    // ── Deduplication ────────────────────────────────────────────────────────
+    async openDedupModal() {
+      this.dedupLoading = true;
+      try {
+        const data = await api('POST', `/users/${this.username}/sessions/${this.currentSession.id}/deduplicate/preview`);
+        this.dedupGroups = data.groups || [];
+        this.selectedDedupGroups = this.dedupGroups.map(() => true);
+        if (this.dedupGroups.length === 0) {
+          this.showToast('No se encontraron propiedades duplicadas.', 'info');
+        }
+      } catch (e) { this.showToast('Error al buscar duplicados.', 'error'); }
+      finally { this.dedupLoading = false; }
+    },
+
+    toggleAllDedupGroups() {
+      const v = !this.dedupAllChecked;
+      this.selectedDedupGroups = this.selectedDedupGroups.map(() => v);
+    },
+
+    async confirmDedup() {
+      const selected = this.selectedDedupGroups.reduce((acc, checked, i) => {
+        if (checked) acc.push(i);
+        return acc;
+      }, []);
+      if (selected.length === 0) {
+        this.showToast('Seleccioná al menos un grupo para deduplicar.', 'info');
+        return;
+      }
+      this.dedupLoading = true;
+      try {
+        const data = await api('POST', `/users/${this.username}/sessions/${this.currentSession.id}/deduplicate/apply`, { selected_groups: selected });
+        this.dedupGroups = [];
+        this.selectedDedupGroups = [];
+        this.showToast(`${data.removed_count} duplicados marcados.`, 'success');
+        await this.selectSession(this.currentSession.id);
+      } catch (e) { this.showToast('Error al eliminar duplicados.', 'error'); }
+      finally { this.dedupLoading = false; }
+    },
+
+    closeDedupModal() {
+      this.dedupGroups = [];
+      this.selectedDedupGroups = [];
     },
 
     // ── Export / Import ──────────────────────────────────────────────────────
