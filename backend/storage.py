@@ -22,9 +22,10 @@ def read_db() -> dict:
         return _default()
     with open(DB_PATH, "r", encoding="utf-8") as f:
         try:
-            return json.load(f)
+            db = json.load(f)
         except json.JSONDecodeError:
             return _default()
+    return db
 
 
 def _now() -> str:

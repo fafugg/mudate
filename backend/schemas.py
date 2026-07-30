@@ -74,16 +74,21 @@ class HouseDict(TypedDict, total=False):
 # ── Request Models ────────────────────────────────────────────────────────────
 
 
+class SearchSource(BaseModel):
+    """A single search URL with its provider engine."""
+    engine: str = Field(..., description="Search engine: zonaprop, argenprop, mercadolibre, or remax")
+    filter: str = Field(..., description="URL path filter from the search engine")
+
+
 class CreateSessionRequest(BaseModel):
     """Request body for creating a new search session."""
-    search_engine: str = Field(..., description="Search engine: zonaprop, argenprop, mercadolibre, or remax")
-    search_filter: str = Field(..., description="URL path filter from the search engine")
+    search_sources: List[SearchSource] = Field(..., description="List of search URLs to scrape")
     label: Optional[str] = Field(None, description="Optional custom label for the session")
 
 
 class UpdateSessionRequest(BaseModel):
-    """Request body for updating a session's filter or label."""
-    search_filter: Optional[str] = Field(None, description="New URL path filter")
+    """Request body for updating a session's filters or label."""
+    search_sources: Optional[List[SearchSource]] = Field(None, description="Replace all search URLs")
     label: Optional[str] = Field(None, description="New label")
 
 
@@ -102,8 +107,7 @@ class SessionSummary(BaseModel):
     id: str
     created_at: str
     last_executed: Optional[str] = None
-    search_engine: str
-    search_filter: str
+    search_sources: List[Dict[str, str]] = []
     label: str
     house_ids: List[str] = []
     active_count: int = 0
@@ -121,8 +125,7 @@ class SessionResponse(BaseModel):
     id: str
     created_at: str
     last_executed: Optional[str] = None
-    search_engine: str
-    search_filter: str
+    search_sources: List[Dict[str, str]] = []
     label: str
     house_ids: List[str] = []
     houses: List[Dict[str, Any]] = []

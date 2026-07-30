@@ -90,6 +90,8 @@ class ArgenpropScraper(BaseScraper):
             # ── Phase 2: Visit detail pages for new listings ───────────────
             total = len(all_raw_cards)
             sem = asyncio.Semaphore(2)
+            context = page.context
+            results_lock = {"count": 0}
 
             async def _process_card(raw: dict) -> Dict[str, Any]:
                 listing = _parse_card(raw)
@@ -121,8 +123,6 @@ class ArgenpropScraper(BaseScraper):
                     )
                 return listing
 
-            context = page.context
-            results_lock = {"count": 0}
             raw_results = await asyncio.gather(
                 *[_process_card(raw) for raw in all_raw_cards]
             )

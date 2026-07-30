@@ -8,6 +8,7 @@ import asyncio
 from typing import Dict, List
 
 from config import settings
+from geocoder import geocode
 from storage import _now, atomic_update, read_db
 
 
@@ -19,7 +20,6 @@ async def run_geocode(house_ids: List[str], run_id: str, runs: Dict) -> None:
     semaphore). The per-house sleep is gone — rate limiting lives entirely in
     the geocoder module.
     """
-    from geocoder import geocode
 
     total = len(house_ids)
     completed = 0

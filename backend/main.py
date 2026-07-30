@@ -27,6 +27,7 @@ from schemas import (
     RunCreatedResponse,
     RunResponse,
     SchedulerResponse,
+    SearchSource,
     SessionResponse,
     UpdateHouseRequest,
     UpdateSessionRequest,
@@ -84,8 +85,17 @@ async def get_user(username: str):
 async def create_session(username: str, body: CreateSessionRequest):
     """Crea una nueva sesión de búsqueda para el usuario."""
     username = _validate_username(username)
-    if body.search_engine not in settings.valid_engines:
-        raise HTTPException(400, "search_engine must be 'zonaprop', 'argenprop', 'mercadolibre', or 'remax'")
+
+    search_sources = []
+    for s in body.search_sources:
+        if s.engine not in settings.valid_engines:
+            raise HTTPException(400, f"Invalid search engine: '{s.engine}'")
+        search_sources.append({"engine": s.engine, "filter": s.filter})
+
+    # Build label from engine names if not provided
+    if not body.label:
+        engines = list({s["engine"] for s in search_sources})
+        body.label = " + ".join(e.capitalize() for e in engines)
 
     session_id = str(uuid.uuid4())
     now = _now()
@@ -93,9 +103,8 @@ async def create_session(username: str, body: CreateSessionRequest):
         "id": session_id,
         "created_at": now,
         "last_executed": None,
-        "search_engine": body.search_engine,
-        "search_filter": body.search_filter,
-        "label": body.label or f"{body.search_engine.capitalize()} — {body.search_filter[:50]}",
+        "search_sources": search_sources,
+        "label": body.label,
         "house_ids": [],
     }
 
@@ -132,12 +141,12 @@ async def delete_session(username: str, session_id: str):
 
 @app.put("/api/users/{username}/sessions/{session_id}", response_model=OkResponse)
 async def update_session(username: str, session_id: str, body: UpdateSessionRequest):
-    """Actualiza el filtro de búsqueda o etiqueta de una sesión."""
+    """Actualiza los filtros de búsqueda o etiqueta de una sesión."""
     username = _validate_username(username)
     def update(db: dict):
         session = _session_or_404(db, username, session_id)
-        if body.search_filter is not None:
-            session["search_filter"] = body.search_filter
+        if body.search_sources is not None:
+            session["search_sources"] = [{"engine": s.engine, "filter": s.filter} for s in body.search_sources]
         if body.label is not None:
             session["label"] = body.label
 

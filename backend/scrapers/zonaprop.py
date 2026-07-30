@@ -10,6 +10,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
+from contextlib import asynccontextmanager
+
 from .base import BaseScraper, UA, normalize_phone, parse_price
 
 logger = logging.getLogger(__name__)
@@ -52,18 +54,10 @@ _ORI_WORDS = {"norte", "sur", "este", "oeste", "noreste", "noroeste", "sureste",
 class ZonapropScraper(BaseScraper):
     BASE_URL = BASE_URL
 
-    async def scrape_search(
-        self,
-        search_filter: str,
-        progress_callback: Optional[Callable[[str, int, int], None]] = None,
-        cancel_check: Optional[Callable[[], bool]] = None,
-        existing_ids: Optional[set] = None,
-    ) -> List[Dict[str, Any]]:
+    @asynccontextmanager
+    async def launch_browser(self, headless: bool = True):
         os.makedirs(_PROFILE_DIR, exist_ok=True)
-
         async with async_playwright() as p:
-            # Headed mode bypasses Cloudflare more reliably locally.
-            # In Docker (no display server) we must use headless instead.
             context = await p.chromium.launch_persistent_context(
                 user_data_dir=_PROFILE_DIR,
                 headless=_HEADLESS,
@@ -72,24 +66,16 @@ class ZonapropScraper(BaseScraper):
                 locale="es-AR",
                 args=[
                     "--disable-blink-features=AutomationControlled",
-                    # Docker-only flags — never pass these locally (Cloudflare fingerprints them)
                     *([
                         "--no-sandbox",
                         "--disable-dev-shm-usage",
                         "--log-level=3",
                     ] if _HEADLESS else [
-                        # Start minimised so the browser never steals focus from
-                        # whatever the user is working on.  The CDP connection and
-                        # Cloudflare fingerprint are unaffected by window state.
                         "--start-minimized",
                     ]),
                 ],
             )
             page = await context.new_page()
-
-            # Block images, media and fonts in headless/Docker mode only.
-            # In headed local mode we never intercept requests — Cloudflare's
-            # fingerprinting detects route interception and treats it as a bot.
             if _HEADLESS:
                 _BLOCK = {"image", "media", "font"}
                 await page.route(
@@ -98,68 +84,78 @@ class ZonapropScraper(BaseScraper):
                         route.abort() if req.resource_type in _BLOCK else route.continue_()
                     ),
                 )
-
             try:
-                # ── Phase 1: collect raw card data clicking through all pages ──
-                all_raw_cards = await _collect_all_pages(
-                    page, search_filter, progress_callback, cancel_check
-                )
-
-                # ── Phase 2: visit detail pages — 2 tabs in parallel ──────────
-                total = len(all_raw_cards)
-                completed = 0
-                sem = asyncio.Semaphore(2)
-
-                async def _process_card(raw: dict) -> Dict[str, Any]:
-                    nonlocal completed
-                    if cancel_check and cancel_check():
-                        return {}
-
-                    listing = _parse_card(raw)
-                    se_id    = listing.get("search_engine_id") or ""
-                    is_known = bool(existing_ids and se_id and se_id in existing_ids)
-
-                    if not is_known and listing.get("url"):
-                        async with sem:
-                            if cancel_check and cancel_check():
-                                return {}
-                            detail_page = await context.new_page()
-                            if _HEADLESS:
-                                _BLOCK = {"image", "media", "font"}
-                                await detail_page.route(
-                                    "**/*",
-                                    lambda route, req: (
-                                        route.abort()
-                                        if req.resource_type in _BLOCK
-                                        else route.continue_()
-                                    ),
-                                )
-                            try:
-                                detail = await _scrape_detail(detail_page, listing["url"])
-                                listing.update({k: v for k, v in detail.items() if v is not None})
-                                await asyncio.sleep(random.uniform(0.3, 0.7))
-                            finally:
-                                await detail_page.close()
-
-                    listing["price_per_m2"] = self.compute_price_per_m2(
-                        listing.get("price"),
-                        listing.get("covered_m2") or listing.get("total_m2"),
-                    )
-                    completed += 1
-                    if progress_callback:
-                        action = "Verificando" if is_known else "Descargando detalle"
-                        progress_callback(
-                            f"{action} {completed}/{total}", completed, total
-                        )
-                    return listing
-
-                raw_results = await asyncio.gather(
-                    *[_process_card(raw) for raw in all_raw_cards]
-                )
-                results = [r for r in raw_results if r]
-
+                yield page
             finally:
                 await context.close()
+
+    async def scrape_search(
+        self,
+        search_filter: str,
+        progress_callback: Optional[Callable[[str, int, int], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
+        existing_ids: Optional[set] = None,
+    ) -> List[Dict[str, Any]]:
+        async with self.launch_browser() as page:
+            # ── Phase 1: collect raw card data clicking through all pages ──
+            all_raw_cards = await _collect_all_pages(
+                page, search_filter, progress_callback, cancel_check
+            )
+
+            # ── Phase 2: visit detail pages — 2 tabs in parallel ──────────
+            total = len(all_raw_cards)
+            completed = 0
+            sem = asyncio.Semaphore(2)
+            context = page.context
+            _headless = _HEADLESS
+
+            async def _process_card(raw: dict) -> Dict[str, Any]:
+                nonlocal completed
+                if cancel_check and cancel_check():
+                    return {}
+
+                listing = _parse_card(raw)
+                se_id    = listing.get("search_engine_id") or ""
+                is_known = bool(existing_ids and se_id and se_id in existing_ids)
+
+                if not is_known and listing.get("url"):
+                    async with sem:
+                        if cancel_check and cancel_check():
+                            return {}
+                        detail_page = await context.new_page()
+                        if _headless:
+                            _BLOCK = {"image", "media", "font"}
+                            await detail_page.route(
+                                "**/*",
+                                lambda route, req: (
+                                    route.abort()
+                                    if req.resource_type in _BLOCK
+                                    else route.continue_()
+                                ),
+                            )
+                        try:
+                            detail = await _scrape_detail(detail_page, listing["url"])
+                            listing.update({k: v for k, v in detail.items() if v is not None})
+                            await asyncio.sleep(random.uniform(0.3, 0.7))
+                        finally:
+                            await detail_page.close()
+
+                listing["price_per_m2"] = self.compute_price_per_m2(
+                    listing.get("price"),
+                    listing.get("covered_m2") or listing.get("total_m2"),
+                )
+                completed += 1
+                if progress_callback:
+                    action = "Verificando" if is_known else "Descargando detalle"
+                    progress_callback(
+                        f"{action} {completed}/{total}", completed, total
+                    )
+                return listing
+
+            raw_results = await asyncio.gather(
+                *[_process_card(raw) for raw in all_raw_cards]
+            )
+            results = [r for r in raw_results if r]
 
         return results
 

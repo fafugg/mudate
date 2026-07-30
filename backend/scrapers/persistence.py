@@ -26,11 +26,12 @@ def persist_listings(
     """
     now = _now()
     session_id = session["id"]
-    engine = session["search_engine"]
+
+    engines: set = {s["engine"] for s in session.get("search_sources", [])}
 
     def update(db: dict):
         # ── Build lookup index ────────────────────────────────────────────────
-        # Search across ALL of the user's houses for this search engine, not
+        # Search across ALL of the user's houses for these search engines, not
         # just the current session.  This means a property already scraped (and
         # geocoded / reviewed) in another session is reused rather than
         # duplicated — preserving lat/lng, notes, and price history.
@@ -44,7 +45,7 @@ def persist_listings(
 
         for hid in user_hids:
             house = db["houses"].get(hid)
-            if not house or house.get("search_engine") != engine:
+            if not house or house.get("search_engine") not in engines:
                 continue
             if house.get("search_engine_id"):
                 by_se_id[house["search_engine_id"]] = hid
@@ -88,7 +89,7 @@ def persist_listings(
                 new_ids.append(hid)
             else:
                 hid = str(uuid.uuid4())
-                db["houses"][hid] = _new_house(hid, listing, session_id, engine, now)
+                db["houses"][hid] = _new_house(hid, listing, session_id, listing.get("search_engine", ""), now)
                 matched_hids.add(hid)
                 new_ids.append(hid)
 
@@ -113,19 +114,21 @@ def persist_listings(
     atomic_update(update)
 
 
+HOUSE_FIELDS = [
+    "type", "ambientes", "dormitorios", "banos", "toilettes", "price", "currency",
+    "price_per_m2", "expenses", "expenses_currency", "address",
+    "covered_m2", "total_m2", "floor", "parking", "amenities",
+    "orientation", "age_years", "condition", "real_estate", "real_estate_phone",
+    "published_at", "images", "description",
+]
+
+
 def _merge(house: dict, listing: dict, now: str) -> None:
     """Update a house record's mutable fields from a fresh listing.
 
     Does NOT touch user-set fields: review, notes, manual_address, lat, lng.
     """
-    updatable = [
-        "type", "ambientes", "dormitorios", "banos", "toilettes", "price", "currency",
-        "price_per_m2", "expenses", "expenses_currency", "address",
-        "covered_m2", "total_m2", "floor", "parking", "amenities",
-        "orientation", "age_years", "condition", "real_estate", "real_estate_phone",
-        "published_at", "images", "description", "lat", "lng",
-    ]
-    for field in updatable:
+    for field in HOUSE_FIELDS:
         if listing.get(field) is not None:
             house[field] = listing[field]
     house["last_updated"] = now

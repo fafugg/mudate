@@ -6,18 +6,24 @@ The actual implementations live in:
 - persistence.py — persist_listings()
 """
 
-from .factory import get_scraper
-from .runner import run_scrape, make_run, mark_cancelled
 
-# Preserve the old names as aliases for any code that still imports them directly
-_make_run = make_run
-_mark_cancelled = mark_cancelled
+def __getattr__(name):
+    if name == "get_scraper":
+        from .factory import get_scraper as _f
+
+        return _f
+    if name in ("run_scrape", "make_run", "mark_cancelled"):
+        from .runner import run_scrape as _rs, make_run as _mr, mark_cancelled as _mc
+
+        _map = {"run_scrape": _rs, "make_run": _mr, "mark_cancelled": _mc}
+        return _map[name]
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
+
 
 __all__ = [
     "get_scraper",
     "run_scrape",
     "make_run",
-    "_make_run",
     "mark_cancelled",
-    "_mark_cancelled",
 ]
