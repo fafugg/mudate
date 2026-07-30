@@ -109,9 +109,15 @@
             <input x-show="editingLabel" x-ref="labelInput" x-model="editLabel"
               @blur="saveLabel()" @keydown.enter="$event.target.blur()" @keydown.escape="editingLabel = false"
               class="text-sm font-semibold text-slate-700 bg-white border border-blue-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-0 max-w-[200px]" />
-            <span x-show="currentSession" class="shrink-0 px-1.5 py-0.5 rounded-full font-medium leading-none"
-              :class="{'bg-purple-100 text-purple-700': currentSession?.search_engine === 'zonaprop', 'bg-orange-100 text-orange-700': currentSession?.search_engine === 'argenprop', 'bg-yellow-100 text-yellow-700': currentSession?.search_engine === 'mercadolibre', 'bg-blue-100 text-blue-700': currentSession?.search_engine === 'remax'}"
-              x-text="ENGINE_LABELS[currentSession?.search_engine] || currentSession?.search_engine"></span>
+            <template x-for="src in (currentSession?.search_sources || [])" :key="src.engine + Math.random()">
+              <span @click="openSourceEditor()"
+                class="shrink-0 px-1.5 py-0.5 rounded-full font-medium leading-none text-[10px] cursor-pointer hover:ring-2 hover:ring-blue-300 transition"
+                :class="{'bg-purple-100 text-purple-700': src.engine === 'zonaprop', 'bg-orange-100 text-orange-700': src.engine === 'argenprop', 'bg-yellow-100 text-yellow-700': src.engine === 'mercadolibre', 'bg-blue-100 text-blue-700': src.engine === 'remax'}"
+                x-text="ENGINE_LABELS[src.engine] || src.engine"></span>
+            </template>
+            <button @click="openSourceEditor()"
+              class="shrink-0 px-1.5 py-0.5 rounded-full font-medium leading-none text-[10px] border border-dashed border-slate-300 text-slate-400 hover:text-blue-600 hover:border-blue-400 transition cursor-pointer"
+              title="Editar fuentes">+</button>
           </div>
         </template>
       </div>
@@ -220,10 +226,10 @@
 
   <!-- ── SESSIONS LIST ── -->
   <div x-show="screen === 'sessions'" class="max-w-2xl mx-auto px-3 sm:px-4 py-6 sm:py-8"
-    @keydown.escape.window="if (showNewForm) { showNewForm = false; newFilter = ''; newLabel = ''; newEngine = ''; }">
+    @keydown.escape.window="if (modalType !== null) closeModal()">
 
     <!-- New session button -->
-    <button @click="showNewForm = true"
+    <button @click="openNewSearchModal()"
       class="w-full border-2 border-dashed border-blue-300 rounded-xl py-4 text-blue-600 hover:border-blue-500 hover:bg-blue-50 transition text-sm font-medium mb-4">
       + Nueva búsqueda
     </button>
@@ -245,9 +251,11 @@
             <div class="flex-1 text-left min-w-0">
               <div class="flex items-center gap-2 mb-1">
                 <span class="text-sm font-semibold text-slate-800 truncate" x-text="s.label"></span>
-                <span class="text-xs px-2 py-0.5 rounded-full font-medium shrink-0"
-                  :class="{'bg-purple-100 text-purple-700': s.search_engine === 'zonaprop', 'bg-orange-100 text-orange-700': s.search_engine === 'argenprop', 'bg-yellow-100 text-yellow-700': s.search_engine === 'mercadolibre', 'bg-blue-100 text-blue-700': s.search_engine === 'remax'}"
-                  x-text="ENGINE_LABELS[s.search_engine] || s.search_engine"></span>
+                <template x-for="src in (s.search_sources || [])" :key="src.engine + Math.random()">
+                  <span class="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
+                    :class="{'bg-purple-100 text-purple-700': src.engine === 'zonaprop', 'bg-orange-100 text-orange-700': src.engine === 'argenprop', 'bg-yellow-100 text-yellow-700': src.engine === 'mercadolibre', 'bg-blue-100 text-blue-700': src.engine === 'remax'}"
+                    x-text="ENGINE_LABELS[src.engine] || src.engine"></span>
+                </template>
               </div>
               <p class="text-xs text-slate-500">
                 <span x-text="s.active_count || 0"></span> propiedades activas
@@ -282,7 +290,7 @@
       </template>
     </div>
 
-    <div x-show="sessions.length === 0 && !showNewForm" class="text-center py-12">
+    <div x-show="sessions.length === 0" class="text-center py-12">
       <div class="text-4xl mb-3">🏠</div>
       <p class="text-slate-400 text-sm">Todavía no tenés búsquedas.</p>
       <p class="text-slate-500 text-sm font-medium mt-1">¡Creá una para empezar a rastrear propiedades!</p>
@@ -304,38 +312,7 @@
   <div x-show="screen === 'session'" class="w-full px-4 sm:px-6 xl:px-12 2xl:px-20 py-4"
     @keydown.escape.window="actionsOpen = false">
 
-    <!-- Filter URL editor -->
-    <div x-show="mobileInfoOpen" class="bg-white rounded-xl border border-slate-200 p-3 mb-3 flex items-center gap-3 flex-wrap">
-      <span class="text-xs font-medium text-slate-500 shrink-0">Filtro:</span>
-      <input x-show="!editingFilter" :value="currentSession?.search_filter" readonly
-        @click="editingFilter = true; editFilter = currentSession.search_filter"
-        class="flex-1 min-w-0 text-xs font-mono text-blue-700 bg-transparent cursor-pointer truncate" />
-      <input x-show="editingFilter" x-model="editFilter" x-ref="filterInput"
-        @keydown.enter="saveFilter" @keydown.escape="editingFilter = false"
-        class="flex-1 min-w-0 text-xs font-mono border border-blue-400 rounded px-2 py-1 focus:outline-none" />
-      <div class="flex gap-2 shrink-0">
-        <button x-show="editingFilter" @click="saveFilter" class="text-xs bg-blue-600 text-white px-2 py-1 rounded">Guardar</button>
-        <button x-show="editingFilter" @click="editingFilter = false" class="text-xs text-slate-500">Cancelar</button>
-        <button x-show="!editingFilter" @click="editingFilter = true; editFilter = currentSession.search_filter" class="text-xs text-blue-500 hover:underline">Editar</button>
-      </div>
-      <!-- Run button -->
-      <button @click="triggerRun" :disabled="isRunning"
-        class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm shrink-0">
-        <span x-show="!isRunning" class="flex items-center gap-1.5">
-          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          Actualizar
-        </span>
-        <span x-show="isRunning" class="flex items-center gap-2">
-          <svg class="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
-          </svg>
-          Ejecutando…
-        </span>
-      </button>
-    </div>
+
 
     <!-- Session summary -->
     <div x-show="houses.length > 0 && mobileInfoOpen" class="bg-white rounded-xl border border-slate-200 px-4 py-3 mb-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs shadow-sm">
@@ -424,8 +401,8 @@
         </div>
       </div>
 
-      <!-- Filtros toggle: shown when filter bar wraps to two rows -->
-      <button @click="filtersOpen = !filtersOpen"
+      <!-- Filtros toggle: only on narrow screens where filters are collapsed -->
+      <button x-show="isNarrow" @click="filtersOpen = !filtersOpen"
         class="flex items-center gap-1.5 text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 hover:border-slate-300 transition shrink-0 whitespace-nowrap">
         <svg class="w-3 h-3 transition-transform duration-200" :class="filtersOpen ? 'rotate-180' : ''"
           fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
@@ -459,6 +436,31 @@
                   @change="toggleFilterType(t)"
                   class="rounded border-slate-300 text-blue-600 focus:ring-blue-400">
                 <span class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800" x-text="t"></span>
+              </label>
+            </template>
+          </div>
+        </div>
+
+        <div class="relative shrink-0" x-data="{ open: false }" @click.away="open = false" x-show="availableEngines.length > 1">
+          <button @click="open = !open"
+            class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-blue-400 whitespace-nowrap">
+            <span>Provider</span>
+            <span x-show="filterProvider.length > 0"
+              class="bg-blue-500 text-white rounded-full text-[10px] px-1.5 py-0.5 leading-none"
+              x-text="filterProvider.length"></span>
+            <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          <div x-show="open" x-transition
+            class="absolute left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 py-1 min-w-[140px] max-h-60 overflow-y-auto">
+            <template x-for="eng in availableEngines" :key="eng">
+              <label class="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 cursor-pointer">
+                <input type="checkbox" :checked="filterProvider.includes(eng)"
+                  @change="toggleProviderFilter(eng)"
+                  class="rounded border-slate-300 text-blue-600 focus:ring-blue-400">
+                <span :class="{'bg-purple-100 text-purple-700': eng === 'zonaprop', 'bg-orange-100 text-orange-700': eng === 'argenprop', 'bg-yellow-100 text-yellow-700': eng === 'mercadolibre', 'bg-blue-100 text-blue-700': eng === 'remax'}"
+                  class="px-1.5 py-0.5 rounded text-[10px] font-medium" x-text="ENGINE_LABELS[eng] || eng"></span>
               </label>
             </template>
           </div>
@@ -527,7 +529,7 @@
           </button>
           <div x-show="columnsOpen" x-cloak
             class="absolute top-full right-0 mt-1 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg z-50 py-1">
-            <template x-for="[key, label] in [['status','Estado'],['review','Revisión'],['id','ID'],['type','Tipo'],['address','Dirección'],['price','Precio'],['m2','$/m²'],['amb','Ambientes'],['dorm','Dormitorios'],['expenses','Expensas'],['realEstate','Inmobiliaria'],['published','Publicado'],['updated','Actualizado']]" :key="key">
+            <template x-for="[key, label] in [['status','Estado'],['review','Revisión'],['id','ID'],['provider','Provider'],['type','Tipo'],['address','Dirección'],['price','Precio'],['m2','$/m²'],['amb','Ambientes'],['dorm','Dormitorios'],['expenses','Expensas'],['realEstate','Inmobiliaria'],['published','Publicado'],['updated','Actualizado']]" :key="key">
               <label class="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
                 <input type="checkbox" :checked="visibleColumns[key]"
                   @change="visibleColumns[key] = $event.target.checked; localStorage.setItem('visibleColumns', JSON.stringify(visibleColumns))"
@@ -557,6 +559,19 @@
             <span x-show="!isNarrow">Mapa</span>
           </button>
         </div>
+
+        <!-- Run button -->
+        <button @click="triggerRun" :disabled="isRunning"
+          class="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shrink-0 whitespace-nowrap">
+          <svg x-show="!isRunning" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          <svg x-show="isRunning" class="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+          </svg>
+          <span x-text="isRunning ? 'Actualizando…' : 'Actualizar'"></span>
+        </button>
 
       </div>
 
@@ -601,6 +616,21 @@
             <label class="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 cursor-pointer">
               <input type="checkbox" :checked="filterStatus.includes(s.value)" @change="toggleFilterStatus(s.value)" class="rounded border-slate-300 text-blue-600 focus:ring-blue-400">
               <span :class="s.cls" class="px-1.5 py-0.5 rounded" x-text="s.label"></span>
+            </label>
+          </template>
+        </div>
+      </div>
+      <div class="relative shrink-0" x-data="{ open: false }" @click.away="open = false" x-show="availableEngines.length > 1">
+        <button @click="open = !open" class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-blue-400 whitespace-nowrap">
+          <span>Provider</span>
+          <span x-show="filterProvider.length > 0" class="bg-blue-500 text-white rounded-full text-[10px] px-1.5 py-0.5 leading-none" x-text="filterProvider.length"></span>
+          <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <div x-show="open" x-transition class="absolute left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 py-1 min-w-[140px]">
+          <template x-for="eng in availableEngines" :key="eng">
+            <label class="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" :checked="filterProvider.includes(eng)" @change="toggleProviderFilter(eng)" class="rounded border-slate-300 text-blue-600 focus:ring-blue-400">
+              <span :class="{'bg-purple-100 text-purple-700': eng === 'zonaprop', 'bg-orange-100 text-orange-700': eng === 'argenprop', 'bg-yellow-100 text-yellow-700': eng === 'mercadolibre', 'bg-blue-100 text-blue-700': eng === 'remax'}" class="px-1.5 py-0.5 rounded text-[10px] font-medium" x-text="ENGINE_LABELS[eng] || eng"></span>
             </label>
           </template>
         </div>
@@ -650,6 +680,7 @@
             <th x-show="visibleColumns.info" class="px-3 py-2 text-center font-semibold text-slate-500">Info</th>
             <th x-show="visibleColumns.link" class="px-3 py-2 text-center font-semibold text-slate-500">Ver</th>
             <th x-show="visibleColumns.id" class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('search_engine_id')">ID <span x-text="sortIndicator('search_engine_id')"></span></th>
+            <th x-show="visibleColumns.provider" class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('search_engine')">Provider <span x-text="sortIndicator('search_engine')"></span></th>
             <th x-show="visibleColumns.type" class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('type')">Tipo <span x-text="sortIndicator('type')"></span></th>
             <th x-show="visibleColumns.address" class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('address')">Dirección <span x-text="sortIndicator('address')"></span></th>
             <th x-show="visibleColumns.price" class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('price')">Precio <span x-text="sortIndicator('price')"></span></th>
@@ -701,6 +732,11 @@
                 </a>
               </td>
               <td x-show="visibleColumns.id" class="px-3 py-2 text-slate-400 font-mono" x-text="h.search_engine_id || '—'"></td>
+              <td x-show="visibleColumns.provider" class="px-3 py-2">
+                <span :class="{'bg-purple-100 text-purple-700': h.search_engine === 'zonaprop', 'bg-orange-100 text-orange-700': h.search_engine === 'argenprop', 'bg-yellow-100 text-yellow-700': h.search_engine === 'mercadolibre', 'bg-blue-100 text-blue-700': h.search_engine === 'remax'}"
+                  class="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                  x-text="ENGINE_LABELS[h.search_engine] || h.search_engine"></span>
+              </td>
               <td x-show="visibleColumns.type" class="px-3 py-2 text-slate-700" x-text="h.type || '—'"></td>
               <td x-show="visibleColumns.address" class="px-3 py-2 text-slate-700 max-w-[180px] truncate cursor-default"
                 @mouseenter="showTooltip($event, h.manual_address || h.address)"
@@ -753,6 +789,9 @@
             <div class="flex items-center gap-1.5">
               <span class="text-xs text-slate-300 tabular-nums shrink-0"
                 x-text="(tablePage - 1) * tablePageSize + i + 1"></span>
+              <span :class="{'bg-purple-100 text-purple-700': h.search_engine === 'zonaprop', 'bg-orange-100 text-orange-700': h.search_engine === 'argenprop', 'bg-yellow-100 text-yellow-700': h.search_engine === 'mercadolibre', 'bg-blue-100 text-blue-700': h.search_engine === 'remax'}"
+                class="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                x-text="ENGINE_LABELS[h.search_engine] || h.search_engine"></span>
               <select x-model="h.review" @change="saveReview(h, $event.target.value)"
                 class="text-xs rounded px-1.5 py-1 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 w-28"
                 :class="reviewClass(h.review)">
@@ -1151,49 +1190,116 @@
       x-text="`${lightboxIdx + 1} / ${lightboxImages.length}`"></div>
   </div>
 
-  <!-- ── NEW SEARCH MODAL ── -->
-  <div x-show="showNewForm" x-cloak x-effect="document.body.style.overflow = showNewForm ? 'hidden' : ''"
-    @click.self="showNewForm = false; newFilter = ''; newLabel = ''; newEngine = ''"
+  <!-- ── MODAL (new search / source editor) ── -->
+  <div x-show="modalType !== null" x-cloak x-effect="document.body.style.overflow = modalType !== null ? 'hidden' : ''"
+    @click.self="closeModal()"
+    @keydown.escape.window="closeModal()"
     class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[1400] p-4">
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
       <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-        <h2 class="font-bold text-slate-800 text-base">Nueva búsqueda</h2>
-        <button @click="showNewForm = false; newFilter = ''; newLabel = ''; newEngine = ''"
-          class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+        <h2 class="font-bold text-slate-800 text-base" x-text="modalType === 'newSearch' ? 'Nueva búsqueda' : 'Fuentes de búsqueda'"></h2>
+        <button @click="closeModal()" class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
       </div>
-      <div class="px-6 py-5 space-y-4">
+
+      <!-- ── Body: new search ── -->
+      <div x-show="modalType === 'newSearch'" x-cloak class="px-6 py-5 space-y-4">
         <div>
           <label class="text-sm font-medium text-slate-600 block mb-1">Nombre <span class="font-normal text-slate-400">(opcional)</span></label>
           <input x-model="newLabel" type="text" placeholder="ej: GBA Norte - hasta USD 350k"
-            @keydown.enter="createSession"
             class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
         </div>
         <div>
-          <label class="text-sm font-medium text-slate-600 block mb-1">Filtro URL</label>
-          <input x-model="newFilter" type="text" placeholder="/inmuebles-venta-gba-norte..."
-            @input="parseFilterUrl()"
-            @keydown.enter="createSession"
-            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono" />
-          <div class="mt-1.5 space-y-1">
-            <span x-show="newEngine" x-cloak
-              class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium w-fit"
-              :class="{'bg-purple-100 text-purple-700': newEngine==='zonaprop', 'bg-orange-100 text-orange-700': newEngine==='argenprop', 'bg-yellow-100 text-yellow-700': newEngine==='mercadolibre', 'bg-blue-100 text-blue-700': newEngine==='remax'}"
-              x-text="engineLabel(newEngine)">
-            </span>
-            <p class="text-xs text-slate-400">
-              URL completa: <span class="font-mono text-blue-600 break-all" x-text="previewUrl()"></span>
-            </p>
+          <label class="text-sm font-medium text-slate-600 block mb-1">URLs de búsqueda</label>
+          <div class="space-y-1.5 mb-3" x-show="newSources.length > 0">
+            <template x-for="(src, idx) in newSources" :key="idx">
+              <div class="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                <span :class="{'bg-purple-100 text-purple-700': src.engine === 'zonaprop', 'bg-orange-100 text-orange-700': src.engine === 'argenprop', 'bg-yellow-100 text-yellow-700': src.engine === 'mercadolibre', 'bg-blue-100 text-blue-700': src.engine === 'remax'}"
+                  class="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
+                  x-text="ENGINE_LABELS[src.engine] || src.engine"></span>
+                <span class="flex-1 text-xs font-mono text-slate-600 truncate min-w-0" x-text="src.filter"></span>
+                <button @click="newSources.splice(idx, 1)" class="text-red-400 hover:text-red-600 text-xs shrink-0 ml-1" title="Eliminar">✕</button>
+              </div>
+            </template>
           </div>
+          <div class="flex items-center gap-2">
+            <select x-model="newSourceEngine" class="text-xs border border-slate-300 rounded-lg px-2 py-2">
+              <option value="argenprop">Argenprop</option>
+              <option value="mercadolibre">MercadoLibre</option>
+              <option value="zonaprop">Zonaprop</option>
+              <option value="remax">Remax</option>
+            </select>
+            <input x-model="newFilter" type="text" placeholder="/path o URL completa…"
+              @input="parseFilterUrl()"
+              @keydown.enter="addNewSource()"
+              class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <button @click="addNewSource()" :disabled="!newFilter"
+              class="text-xs bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-semibold px-3 py-2 rounded-lg transition shrink-0 whitespace-nowrap">
+              + Agregar
+            </button>
+          </div>
+          <p class="text-xs text-slate-400 mt-1.5">
+            Si pegás una URL completa, el motor se detecta automáticamente.
+          </p>
         </div>
       </div>
-      <div class="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
-        <button @click="showNewForm = false; newFilter = ''; newLabel = ''; newEngine = ''"
+
+      <!-- ── Body: source editor ── -->
+      <div x-show="modalType === 'sourceEditor'" x-cloak class="px-6 py-5 space-y-4">
+        <div class="space-y-1.5" x-show="_editSources.length > 0">
+          <template x-for="(src, idx) in _editSources" :key="idx">
+            <div class="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+              <span :class="{'bg-purple-100 text-purple-700': src.engine === 'zonaprop', 'bg-orange-100 text-orange-700': src.engine === 'argenprop', 'bg-yellow-100 text-yellow-700': src.engine === 'mercadolibre', 'bg-blue-100 text-blue-700': src.engine === 'remax'}"
+                class="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
+                x-text="ENGINE_LABELS[src.engine] || src.engine"></span>
+              <span class="flex-1 text-xs font-mono text-slate-600 truncate min-w-0" x-text="src.filter"></span>
+              <button @click="removeEditSource(idx)" class="text-red-400 hover:text-red-600 text-xs shrink-0" title="Eliminar">✕</button>
+            </div>
+          </template>
+        </div>
+        <div>
+          <label class="text-sm font-medium text-slate-600 block mb-1">Nueva URL</label>
+          <div class="flex items-center gap-2">
+            <select x-model="_editSourceEngine" class="text-xs border border-slate-300 rounded-lg px-2 py-2">
+              <option value="argenprop">Argenprop</option>
+              <option value="mercadolibre">MercadoLibre</option>
+              <option value="zonaprop">Zonaprop</option>
+              <option value="remax">Remax</option>
+            </select>
+            <input x-model="_editSourceFilter" type="text" placeholder="/path o URL completa…"
+              @keydown.enter="addEditSource()"
+              class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <button @click="addEditSource()" :disabled="!_editSourceFilter"
+              class="text-xs bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-semibold px-3 py-2 rounded-lg transition shrink-0 whitespace-nowrap">
+              + Agregar
+            </button>
+          </div>
+          <p class="text-xs text-slate-400 mt-1.5">
+            Si pegás una URL completa, el motor se detecta automáticamente.
+          </p>
+        </div>
+      </div>
+
+      <!-- ── Footer: new search ── -->
+      <div x-show="modalType === 'newSearch'" class="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+        <button @click="closeModal()"
           class="text-sm text-slate-500 hover:text-slate-700 px-4 py-2 rounded-lg transition">
           Cancelar
         </button>
-        <button @click="createSession" :disabled="!newFilter || !newEngine"
+        <button @click="createSession" :disabled="newSources.length === 0"
           class="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-sm font-semibold px-5 py-2 rounded-lg transition">
-          Buscar
+          Crear búsqueda
+        </button>
+      </div>
+
+      <!-- ── Footer: source editor ── -->
+      <div x-show="modalType === 'sourceEditor'" class="px-6 py-4 border-t border-slate-100 flex justify-end gap-2">
+        <button @click="closeModal()"
+          class="text-sm text-slate-500 hover:text-slate-700 px-4 py-2 rounded-lg transition">
+          Cancelar
+        </button>
+        <button @click="saveEditSources()"
+          class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-5 py-2 rounded-lg transition">
+          Guardar
         </button>
       </div>
     </div>
@@ -1314,1111 +1420,8 @@
     x-text="tooltip.text">
   </div>
 
-<script>
-function app() {
-  return {
-    screen: 'login',
-    username: '',
-    sessions: [],
-    currentSession: null,
-    houses: [],
-    loading: false,
-    loadingMsg: '',
-    showNewForm: false,
-    newEngine: '',
-    newFilter: '',
-    newLabel: '',
-    editingFilter: false,
-    editFilter: '',
-    runId: null,
-    runSessionId: null,
-    runStatus: null,
-    runDismissed: false,
-    _pollInterval: null,
-    filterStatus: [],
-    filterType: [],
-    filterMinPrice: '',
-    filterMaxPrice: '',
-    filterAddress: '',
-    filterRealEstate: '',
-    filterPriceChange: false,
-    filterNotes: '',
-    filtersOpen: false,
-    isNarrow: false,
-    mobileInfoOpen: true,
-    sortBy: 'search_engine_id',
-    sortDir: 'asc',
-    detailHouse: null,
-    lightboxImg: null,
-    lightboxImages: [],
-    lightboxIdx: 0,
-    tablePage: 1,
-    tablePageSize: 200,
-    tooltip: { visible: false, text: '', x: 0, y: 0 },
-    _tooltipTimer: null,
-    notesSaved: false,
-    mapView: false,
-    _map: null,
-    _markerLayer: null,
-    _mapUserMoved: false,
-    _redrawTimer: null,
-    geocodeStatus: null,
-    _geocodePoll: null,
-    _geocodeRunId: null,
-    _geocodingDetailHouseId: null,
-    _mapFocusHouse: null,
-    _markerMap: {},
-    mapMissingCount: 0,
-    toastMessage: '',
-    toastType: '',
-    confirmModal: { show: false, title: '', message: '', action: null },
-    showShortcuts: false,
-    editingLabel: false,
-    editLabel: '',
-    selectedHouses: [],
-    compareHouses: [],
-    visibleColumns: JSON.parse(localStorage.getItem('visibleColumns') || 'null') || {
-      status: true, review: true, info: true, link: true, id: true, type: true,
-      address: true, price: true, m2: true, amb: true, dorm: true, expenses: true,
-      realEstate: true, published: true, updated: true,
-    },
-    darkMode: false,
-    actionsOpen: false,
-    sessionsActionsOpen: false,
-    showManualAddressModal: false,
-    _savingAddressId: null,
-    _savedAddressId: null,
-    editingModalAddress: false,
-    mapLegend: MAP_LEGEND,
-
-    get isRunning() {
-      return this.runStatus?.status === 'running';
-    },
-
-    get propertyTypes() {
-      return [...new Set(this.houses.map(h => h.type).filter(Boolean))].sort();
-    },
-
-    // Count of active extra filters (everything except filterReview)
-    get activeExtraFilters() {
-      return [
-        this.filterType.length > 0,
-        this.filterStatus.length > 0,
-        !!this.filterMinPrice,
-        !!this.filterMaxPrice,
-        !!this.filterAddress,
-        !!this.filterRealEstate,
-      ].filter(Boolean).length;
-    },
-
-    // Normalise a string for fuzzy matching: lowercase + strip accents
-    _norm(s) {
-      return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-    },
-
-    get filteredHouses() {
-      let list = [...this.houses];
-      if (this.filterStatus.length > 0) list = list.filter(h => this.filterStatus.includes(h.status));
-      if (this.filterType.length > 0) list = list.filter(h => this.filterType.includes(h.type));
-      if (this.filterReview.length > 0 && this.filterReview.length < REVIEW_OPTIONS.length) {
-        list = list.filter(h => this.filterReview.includes(h.review || ''));
-      }
-      if (this.filterMinPrice) list = list.filter(h => h.price && h.price >= parseFloat(this.filterMinPrice));
-      if (this.filterMaxPrice) list = list.filter(h => !h.price || h.price <= parseFloat(this.filterMaxPrice));
-      if (this.filterAddress) {
-        const q = this._norm(this.filterAddress);
-        list = list.filter(h => this._norm(h.manual_address || h.address).includes(q));
-      }
-      if (this.filterRealEstate) {
-        const q = this._norm(this.filterRealEstate);
-        list = list.filter(h => this._norm(h.real_estate).includes(q));
-      }
-      if (this.filterPriceChange) {
-        list = list.filter(h => this.priceChangePct(h) !== null);
-      }
-      if (this.filterNotes) {
-        const q = this._norm(this.filterNotes);
-        list = list.filter(h => this._norm(h.notes || '').includes(q));
-      }
-      list.sort((a, b) => {
-        let av = a[this.sortBy], bv = b[this.sortBy];
-        if (av == null) av = this.sortDir === 'asc' ? Infinity : -Infinity;
-        if (bv == null) bv = this.sortDir === 'asc' ? Infinity : -Infinity;
-        if (typeof av === 'string') { av = av.toLowerCase(); bv = (bv || '').toLowerCase(); }
-        if (av < bv) return this.sortDir === 'asc' ? -1 : 1;
-        if (av > bv) return this.sortDir === 'asc' ? 1 : -1;
-        return 0;
-      });
-      return list;
-    },
-
-    get totalPages() {
-      return Math.max(1, Math.ceil(this.filteredHouses.length / this.tablePageSize));
-    },
-
-    get pagedHouses() {
-      const start = (this.tablePage - 1) * this.tablePageSize;
-      return this.filteredHouses.slice(start, start + this.tablePageSize);
-    },
-
-    get pageRange() {
-      const total = this.totalPages, cur = this.tablePage, delta = 2, pages = [];
-      for (let p = Math.max(1, cur - delta); p <= Math.min(total, cur + delta); p++) pages.push(p);
-      return pages;
-    },
-
-    get priceChangeSummary() {
-      const up = this.houses.filter(h => { const p = this.priceChangePct(h); return p !== null && p > 0; }).length;
-      const down = this.houses.filter(h => { const p = this.priceChangePct(h); return p !== null && p < 0; }).length;
-      const parts = [];
-      if (down > 0) parts.push(`${down} bajaron`);
-      if (up > 0) parts.push(`${up} subieron`);
-      return parts.length > 0 ? parts.join(', ') : null;
-    },
-
-    get sessionStats() {
-      const active = this.houses.filter(h => h.status === 'active');
-      const prices = active.map(h => h.price).filter(p => p != null && p > 0);
-      const pricesM2 = active.map(h => h.price_per_m2).filter(p => p != null && p > 0);
-      const amenities = {};
-      active.forEach(h => { (h.amenities || []).forEach(a => { amenities[a] = (amenities[a] || 0) + 1; }); });
-      const topAmenities = Object.entries(amenities).sort((a, b) => b[1] - a[1]).slice(0, 5);
-      return {
-        total: this.houses.length,
-        active: active.length,
-        removed: this.houses.length - active.length,
-        priceMin: prices.length ? Math.min(...prices) : null,
-        priceMax: prices.length ? Math.max(...prices) : null,
-        priceMedian: prices.length ? prices.sort((a, b) => a - b)[Math.floor(prices.length / 2)] : null,
-        avgM2: pricesM2.length ? Math.round(pricesM2.reduce((a, b) => a + b, 0) / pricesM2.length) : null,
-        topAmenities,
-      };
-    },
-
-    get manualAddressHouses() {
-      function group(h) {
-        const failed = !!h.geocode_failed;
-        const hasManual = !!h.manual_address;
-        if ( failed &&  hasManual) return 0;
-        if ( failed && !hasManual) return 1;
-        if (!failed &&  hasManual) return 2;
-        return 3; // !failed && !hasManual
-      }
-      return [...this.houses].sort((a, b) => {
-        const gd = group(a) - group(b);
-        if (gd !== 0) return gd;
-        return (String(a.search_engine_id || '')).localeCompare(String(b.search_engine_id || ''));
-      });
-    },
-
-    reviewClass(review) {
-      return REVIEW_CLASSES[review] || REVIEW_CLASSES[''];
-    },
-
-    detailChips(h) {
-      if (!h) return [];
-      const chips = [];
-      if (h.ambientes != null)  chips.push({ icon: '🏠', label: 'Ambientes',   value: h.ambientes });
-      if (h.dormitorios != null) chips.push({ icon: '🛏', label: 'Dormitorios', value: h.dormitorios });
-      if (h.banos != null)       chips.push({ icon: '🚿', label: 'Baños',       value: h.banos });
-      if (h.toilettes != null)   chips.push({ icon: '🪠', label: 'Toilettes',   value: h.toilettes });
-      if (h.covered_m2)          chips.push({ icon: '📐', label: 'm² Cubiertos', value: h.covered_m2 + ' m²' });
-      if (h.total_m2)            chips.push({ icon: '📏', label: 'm² Totales',   value: h.total_m2 + ' m²' });
-      if (h.floor)               chips.push({ icon: '🏢', label: 'Piso',         value: h.floor });
-      if (h.parking != null)     chips.push({ icon: '🚗', label: 'Cochera',      value: h.parking ? 'Sí' : 'No' });
-      if (h.orientation)         chips.push({ icon: '🧭', label: 'Orientación',  value: h.orientation });
-      return chips;
-    },
-
-    detailMeta(h) {
-      if (!h) return [];
-      const rows = [];
-      if (h.condition)  rows.push(['Estado',      h.condition]);
-      if (h.age_years != null) rows.push(['Antigüedad', h.age_years + ' años']);
-      return rows;
-    },
-
-    showTooltip(event, text) {
-      if (!text) return;
-      clearTimeout(this._tooltipTimer);
-      this._tooltipTimer = setTimeout(() => {
-        const r = event.target.getBoundingClientRect();
-        this.tooltip = { visible: true, text, x: r.left + r.width / 2, y: r.top - 6 };
-      }, 500);
-    },
-
-    hideTooltip() {
-      clearTimeout(this._tooltipTimer);
-      this.tooltip.visible = false;
-    },
-
-    init() {
-      const saved = localStorage.getItem('darkMode');
-      this.darkMode = saved === 'true';
-      if (this.darkMode) document.documentElement.classList.add('dark');
-
-      window.addEventListener('beforeunload', (e) => {
-        if (this.screen !== 'login') {
-          e.preventDefault();
-          e.returnValue = '';
-        }
-      });
-
-      // Debounced resize: coalesces rapid events (scroll toolbar, pinch zoom,
-      // Ctrl+/-) so we never call invalidateSize mid-animation.
-      let _resizeTimer = null;
-      const onResize = () => {
-        clearTimeout(_resizeTimer);
-        _resizeTimer = setTimeout(() => {
-          if (!this.mapView) return;
-          this._resizeMap();
-          this._map?.invalidateSize({ animate: false });
-        }, 150);
-      };
-      window.addEventListener('resize', onResize);
-      // visualViewport fires on mobile when the browser toolbar appears/disappears
-      window.visualViewport?.addEventListener('resize', onResize);
-
-      // Responsive filter bar: wide (>1024px) vs narrow (<=1024px)
-      const mq = window.matchMedia('(max-width: 1334px)');
-      this.isNarrow = mq.matches;
-      mq.addEventListener('change', (e) => { this.isNarrow = e.matches; });
-
-      const redraw = () => {
-        clearTimeout(this._redrawTimer);
-        this._redrawTimer = setTimeout(() => {
-          if (this.mapView && this._map) this.renderPins();
-        }, 200);
-      };
-      ['filterStatus', 'filterType', 'filterReview', 'filterMaxPrice', 'filterAddress', 'filterRealEstate', 'houses'].forEach(k => {
-        this.$watch(k, redraw);
-      });
-      this.$watch('showManualAddressModal', (val, old) => {
-        if (!val && old && this.mapView && this._map) {
-          this.$nextTick(() => this._map.invalidateSize({ animate: false }));
-        }
-      });
-      this.$watch('mobileInfoOpen', () => {
-        if (this.mapView && this._map) {
-          this.$nextTick(() => { this._resizeMap(); this._map.invalidateSize({ animate: false }); });
-        }
-      });
-    },
-
-    async setView(view) {
-      this.mapView = view === 'map';
-      if (this.mapView) {
-        await this.$nextTick();
-        // Double-rAF: first frame un-hides the element, second frame has
-        // correct layout metrics. Only then measure + open the map.
-        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-        this._resizeMap();
-        await this.openMap();
-      }
-    },
-
-    _resizeMap() {
-      const el = document.getElementById('map-container');
-      if (!el) return;
-      const top = el.getBoundingClientRect().top;
-      // Use visualViewport height when available (accounts for mobile
-      // browser toolbar shrinking/growing); fall back to window.innerHeight.
-      const vh = (window.visualViewport?.height ?? window.innerHeight);
-      el.style.height = Math.max(200, vh - top - 16) + 'px';
-    },
-
-    stopGeocoding() {
-      if (this._geocodePoll) { clearInterval(this._geocodePoll); this._geocodePoll = null; }
-      if (this._geocodeRunId) {
-        fetch(`/api/runs/${this._geocodeRunId}`, { method: 'DELETE' }).catch(() => {});
-        this._geocodeRunId = null;
-      }
-      this.geocodeStatus = null;
-    },
-
-    async openMap() {
-      if (this._geocodeRunId) {
-        this.initMap();
-        return;
-      }
-      const needsGeocode = this.houses.some(h => h.lat == null && (h.manual_address || h.address));
-      if (needsGeocode) {
-        try {
-          const res = await fetch(
-            `/api/users/${this.username}/sessions/${this.currentSession.id}/geocode`,
-            { method: 'POST' }
-          );
-          const data = await res.json();
-          if (!data.already_done && data.run_id) {
-            this._geocodeRunId = data.run_id;
-            this.geocodeStatus = { status: 'running', message: 'Geocodificando…', progress: 0, total: 0 };
-            this._geocodePoll = setInterval(() => this.pollGeocode(data.run_id), 2000);
-          }
-        } catch (e) { /* show map anyway */ }
-      }
-      this.initMap();
-    },
-
-    async skipGeocode() {
-      this.stopGeocoding();
-      this.initMap();
-    },
-
-    async pollGeocode(runId) {
-      try {
-        const status = await api('GET', `/runs/${runId}`);
-        const prevProgress = this.geocodeStatus?.progress || 0;
-        this.geocodeStatus = status;
-        if (status.status === 'running') {
-          if (status.progress > prevProgress) {
-            const d = await api('GET', `/users/${this.username}/sessions/${this.currentSession.id}`);
-            this.houses = d.houses || [];
-          }
-          return;
-        }
-        clearInterval(this._geocodePoll);
-        this._geocodePoll = null;
-        this._geocodeRunId = null;
-        if (status.status === 'done') {
-          const d = await api('GET', `/users/${this.username}/sessions/${this.currentSession.id}`);
-          this.houses = d.houses || [];
-          this.geocodeStatus = null;
-        }
-        if (this.mapView) this.initMap();
-      } catch (e) {
-        clearInterval(this._geocodePoll);
-        this._geocodePoll = null;
-        this._geocodeRunId = null;
-        if (this.mapView) this.initMap();
-      }
-    },
-
-    initMap() {
-      this._resizeMap();
-      if (this._map) {
-        this._map.invalidateSize({ animate: false });
-        this.renderPins();
-        return;
-      }
-      this._map = L.map('map').setView([-34.61, -58.44], 12);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        maxZoom: 19,
-      }).addTo(this._map);
-      this._map.on('moveend zoomend', () => { this._mapUserMoved = true; });
-      // Single deferred invalidate — gives the browser one frame to fully
-      // commit the container height before Leaflet measures it.
-      requestAnimationFrame(() => {
-        this._map?.invalidateSize({ animate: false });
-        this.renderPins();
-      });
-    },
-
-    renderPins() {
-      if (!this._map) return;
-      if (!this._markerLayer) {
-        this._markerLayer = L.layerGroup().addTo(this._map);
-      } else {
-        this._markerLayer.clearLayers();
-      }
-      this._markerMap = {};
-      const placed = this.filteredHouses.filter(h => h.lat != null && h.lng != null);
-      this.mapMissingCount = this.filteredHouses.filter(h => h.lat == null && (h.manual_address || h.address)).length;
-      placed.forEach(h => {
-        const marker = L.circleMarker([h.lat, h.lng], {
-          radius: 9,
-          fillColor: this.pinColor(h),
-          color: '#ffffff',
-          weight: 2,
-          opacity: 1,
-          fillOpacity: 0.85,
-        });
-        marker.bindTooltip(
-          `<b>${this.escHtml(h.manual_address || h.address || '')}</b><br>${this.escHtml(this.formatPrice(h.price, h.currency))}`,
-          { sticky: true }
-        );
-        marker.on('click', () => this.openDetail(h));
-        this._markerLayer.addLayer(marker);
-        this._markerMap[h.internal_id] = marker;
-      });
-      if (placed.length > 0 && !this._mapUserMoved && !this._mapFocusHouse) this.fitBounds();
-
-      if (this._mapFocusHouse) {
-        const fh = this._mapFocusHouse;
-        this._mapFocusHouse = null;
-        if (fh.lat != null) {
-          this._map.flyTo([fh.lat, fh.lng], 16, { animate: true, duration: 0.8 });
-          const m = this._markerMap[fh.internal_id];
-          if (m) {
-            m.setRadius(16);
-            m.setStyle({ weight: 4, color: '#1d4ed8', fillOpacity: 1 });
-            m.bringToFront();
-            m.openTooltip();
-            setTimeout(() => {
-              m.setRadius(9);
-              m.setStyle({ weight: 2, color: '#ffffff', fillOpacity: 0.85 });
-            }, 3000);
-          }
-        }
-      }
-    },
-
-    fitBounds() {
-      if (!this._map || !this._markerLayer) return;
-      this._mapUserMoved = false;
-      const layers = this._markerLayer.getLayers();
-      if (layers.length > 0) {
-        this._map.fitBounds(L.featureGroup(layers).getBounds().pad(0.35), { maxZoom: 14 });
-      }
-    },
-
-    pinColor(h) {
-      return PIN_COLORS[h.status] || PIN_COLORS[h.review] || PIN_COLORS.default;
-    },
-
-    escHtml(str) {
-      return String(str ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-    },
-
-    openDetail(h) { this.detailHouse = h; this.lightboxImg = null; this.notesSaved = false; },
-
-    navigateDetail(dir) {
-      if (!this.detailHouse || this.lightboxImg) return;
-      const list = this.filteredHouses;
-      const idx = list.findIndex(h => h.internal_id === this.detailHouse.internal_id);
-      if (idx === -1) return;
-      const next = list[idx + dir];
-      if (next) this.openDetail(next);
-    },
-
-    async viewInMap(h) {
-      this._mapFocusHouse = h;
-      await this.closeDetail();
-      await this.setView('map');
-    },
-
-    async closeDetail() {
-      if (this.detailHouse && this.$refs.notesTextarea) {
-        await this.saveNotes(this.detailHouse, this.$refs.notesTextarea.value);
-      }
-      this.detailHouse = null;
-      this.editingModalAddress = false;
-      document.body.style.overflow = '';
-    },
-
-    openLightbox(images, idx) {
-      this.lightboxImages = images;
-      this.lightboxIdx = idx;
-      this.lightboxImg = images[idx];
-    },
-    lightboxPrev() {
-      // Do nothing if neither the lightbox nor the detail modal is open
-      if (!this.lightboxImg && !this.detailHouse) return;
-      // Open lightbox at the last image when triggered from the detail modal
-      if (!this.lightboxImg && this.detailHouse?.images?.length) {
-        this.openLightbox(this.detailHouse.images, this.detailHouse.images.length - 1);
-        return;
-      }
-      if (!this.lightboxImages.length) return;
-      this.lightboxIdx = (this.lightboxIdx - 1 + this.lightboxImages.length) % this.lightboxImages.length;
-      this.lightboxImg = this.lightboxImages[this.lightboxIdx];
-    },
-    lightboxNext() {
-      // Do nothing if neither the lightbox nor the detail modal is open
-      if (!this.lightboxImg && !this.detailHouse) return;
-      // Open lightbox at the first image when triggered from the detail modal
-      if (!this.lightboxImg && this.detailHouse?.images?.length) {
-        this.openLightbox(this.detailHouse.images, 0);
-        return;
-      }
-      if (!this.lightboxImages.length) return;
-      this.lightboxIdx = (this.lightboxIdx + 1) % this.lightboxImages.length;
-      this.lightboxImg = this.lightboxImages[this.lightboxIdx];
-    },
-
-    previewUrl() {
-      if (!this.newFilter) return '—';
-      const bases = {
-        zonaprop: 'https://www.zonaprop.com.ar',
-        argenprop: 'https://www.argenprop.com',
-        mercadolibre: 'https://inmuebles.mercadolibre.com.ar',
-        remax: 'https://www.remax.com.ar/listings/buy',
-      };
-      const base = bases[this.newEngine] || bases.zonaprop;
-      const sep = this.newFilter.startsWith('/') || this.newFilter.startsWith('?') ? '' : '/';
-      return base + sep + this.newFilter;
-    },
-
-    engineLabel(engine) {
-      return ENGINE_LABELS[engine] || '';
-    },
-
-    parseFilterUrl() {
-      const val = this.newFilter.trim();
-      if (!val.startsWith('http')) {
-        this.newEngine = '';
-        return;
-      }
-      try {
-        const u = new URL(val);
-        const host = u.hostname.toLowerCase();
-        if (host.includes('zonaprop.com.ar')) {
-          this.newEngine = 'zonaprop';
-          this.newFilter = u.pathname + u.search;
-        } else if (host.includes('argenprop.com')) {
-          this.newEngine = 'argenprop';
-          this.newFilter = u.pathname + u.search;
-        } else if (host.includes('mercadolibre.com.ar') || host.includes('inmuebles.mercadolibre')) {
-          this.newEngine = 'mercadolibre';
-          this.newFilter = u.pathname + u.search;
-        } else if (host.includes('remax.com.ar')) {
-          this.newEngine = 'remax';
-          // For Remax, extract everything after /listings/buy
-          const match = u.pathname.match(/\/listings\/buy(.*)/);
-          this.newFilter = (match ? match[1] : u.pathname) + u.search + u.hash;
-        }
-      } catch (e) { /* not a valid URL, ignore */ }
-    },
-
-    logout() {
-      this.stopPolling();
-      this.stopGeocoding();
-      this.username = '';
-      this.sessions = [];
-      this.currentSession = null;
-      this.houses = [];
-      this.runId = null;
-      this.runStatus = null;
-      this.runDismissed = false;
-      this.detailHouse = null;
-      this.mapView = false;
-      this.actionsOpen = false;
-      this._mapFocusHouse = null;
-      this._markerMap = {};
-      if (this._markerLayer) { this._markerLayer.clearLayers(); }
-      this.screen = 'login';
-    },
-
-    async goBack() {
-      this.stopGeocoding();
-      this.filterReview = [];
-      this.filterType = [];
-      this.filterStatus = [];
-      this.filterMinPrice = '';
-      this.filterMaxPrice = '';
-      this.filterAddress = '';
-      this.filterRealEstate = '';
-      this.filtersOpen = false;
-      try {
-        const data = await api('GET', `/users/${this.username}`);
-        this.sessions = data.sessions || [];
-      } catch (e) { /* show stale list if fetch fails */ }
-      this.screen = 'sessions';
-      window.scrollTo(0, 0);
-    },
-
-    async login() {
-      this.loading = true;
-      try {
-        const data = await api('GET', `/users/${this.username}`);
-        if (data.is_new) {
-          this.loading = false;
-          this.showConfirm(
-            'Crear usuario',
-            `El usuario "${this.username}" no existe. ¿Querés crearlo?`,
-            async () => {
-              this.loading = true;
-              this.sessions = data.sessions || [];
-              this.screen = 'sessions';
-              window.scrollTo(0, 0);
-            }
-          );
-          return;
-        }
-        this.sessions = data.sessions || [];
-        this.screen = 'sessions';
-        window.scrollTo(0, 0);
-      } catch (e) { this.showToast('Error al conectar con el servidor.', 'error'); }
-      finally { this.loading = false; }
-    },
-
-    async createSession() {
-      if (!this.newFilter) return;
-      this.loading = true; this.loadingMsg = 'Creando búsqueda...';
-      try {
-        const session = await api('POST', `/users/${this.username}/sessions`, {
-          search_engine: this.newEngine,
-          search_filter: this.newFilter.startsWith('/') ? this.newFilter : '/' + this.newFilter,
-          label: this.newLabel || null,
-        });
-        this.showNewForm = false; this.newFilter = ''; this.newLabel = '';
-        await this.selectSession(session.id);
-        await this.triggerRun();
-      } catch (e) { this.showToast('Error al crear la búsqueda.', 'error'); }
-      finally { this.loading = false; this.loadingMsg = ''; }
-    },
-
-    async selectSession(sessionId) {
-      this.loading = true; this.loadingMsg = 'Cargando...';
-      try {
-        const data = await api('GET', `/users/${this.username}/sessions/${sessionId}`);
-        this.currentSession = data;
-        this.houses = data.houses || [];
-        this.editingFilter = false;
-        // Only reset run state when navigating to a different session.
-        // If this session owns the active run, keep the progress bar alive
-        // and ensure polling is running (goBack may have stopped it).
-        if (sessionId !== this.runSessionId) {
-          this.runStatus = null; this.runDismissed = false;
-          this.stopPolling();
-        } else if (this.isRunning && !this._pollInterval) {
-          this.startPolling();
-        }
-        this.tablePage = 1;
-        this.filterReview = [];
-        this.filterType = [];
-        this.filterStatus = [];
-        this.filterMinPrice = '';
-      this.filterMaxPrice = '';
-        this.filterAddress = '';
-        this.filterRealEstate = '';
-        this.filtersOpen = false;
-        this.mapView = false;
-        this._markerMap = {};
-        if (this._markerLayer) { this._markerLayer.clearLayers(); }
-        this.stopGeocoding();
-        this.screen = 'session';
-      } catch (e) { this.showToast('Error al cargar la búsqueda.', 'error'); }
-      finally { this.loading = false; this.loadingMsg = ''; }
-    },
-
-    confirmDeleteSession(s) {
-      this.showConfirm(
-        'Eliminar búsqueda',
-        `¿Eliminar la búsqueda "${s.label}" y todas sus propiedades? Esta acción no se puede deshacer.`,
-        () => this.deleteSession(s.id)
-      );
-    },
-
-    async deleteSession(sessionId) {
-      this.loading = true;
-      try {
-        await api('DELETE', `/users/${this.username}/sessions/${sessionId}`);
-        this.sessions = this.sessions.filter(s => s.id !== sessionId);
-      } catch (e) { this.showToast('Error al eliminar la búsqueda.', 'error'); }
-      finally { this.loading = false; }
-    },
-
-    async forceGeocode() {
-      if (this._geocodeRunId) return;
-      try {
-        const data = await api('POST', `/users/${this.username}/sessions/${this.currentSession.id}/geocode?force=true`);
-        if (data.already_done) return;
-        this._geocodeRunId = data.run_id;
-        this.geocodeStatus = { status: 'running', message: 'Geocodificando…', progress: 0, total: 0 };
-        this._geocodePoll = setInterval(() => this.pollGeocode(data.run_id), 2000);
-        if (this.mapView) this.initMap();
-      } catch (e) { this.showToast('Error al iniciar geocodificación.', 'error'); }
-    },
-
-    importDb() {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.json,application/json';
-      input.onchange = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const formData = new FormData();
-        formData.append('file', file);
-        try {
-          const res = await fetch('/api/admin/import-db', { method: 'POST', body: formData });
-          const data = await res.json();
-          if (!res.ok) {
-            this.showToast(`Error al importar: ${data.detail}`, 'error');
-            return;
-          }
-          this.showToast('Base de datos importada. Cerrando sesión…', 'success');
-          this.logout();
-        } catch (err) {
-          this.showToast('Error de red al importar la base de datos.', 'error');
-        }
-      };
-      input.click();
-    },
-
-    exportCsv() {
-      const FIELDS = [
-        'internal_id', 'type', 'ambientes', 'dormitorios', 'banos', 'toilettes',
-        'price', 'currency', 'price_per_m2', 'expenses', 'expenses_currency',
-        'address', 'manual_address', 'covered_m2', 'total_m2', 'floor', 'parking',
-        'orientation', 'age_years', 'condition', 'real_estate',
-        'amenities', 'description', 'url', 'status', 'review', 'notes', 'last_updated', 'created_at',
-      ];
-      const escape = v => {
-        if (v == null) return '';
-        const s = Array.isArray(v) ? v.join(', ') : String(v);
-        return s.includes(',') || s.includes('"') || s.includes('\n')
-          ? '"' + s.replace(/"/g, '""') + '"'
-          : s;
-      };
-      const rows = [FIELDS.join(',')];
-      for (const h of this.filteredHouses) {
-        rows.push(FIELDS.map(f => escape(h[f])).join(','));
-      }
-      const blob = new Blob(['﻿' + rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `casas_${this.currentSession.id.slice(0, 8)}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-    },
-
-    async copyHouseLinks() {
-      const lines = this.filteredHouses.map((h, i) => {
-        const price = this.formatPrice(h.price, h.currency);
-        return `* #${i + 1} ${price} ${h.url}`;
-      });
-      await navigator.clipboard.writeText(lines.join('\n'));
-      this.showToast('¡Links copiados al portapapeles!');
-    },
-
-    showToast(msg, type = 'info') {
-      this.toastMessage = msg;
-      this.toastType = type;
-      setTimeout(() => { this.toastMessage = ''; this.toastType = ''; }, 3000);
-    },
-
-    showConfirm(title, message, action) {
-      this.confirmModal = { show: true, title, message, action };
-    },
-
-    handleConfirm() {
-      const { action } = this.confirmModal;
-      this.confirmModal = { show: false, title: '', message: '', action: null };
-      if (action) action();
-    },
-
-    cancelConfirm() {
-      this.confirmModal = { show: false, title: '', message: '', action: null };
-    },
-
-    toggleDark() {
-      this.darkMode = !this.darkMode;
-      document.documentElement.classList.toggle('dark', this.darkMode);
-      localStorage.setItem('darkMode', this.darkMode);
-    },
-
-    async saveManualAddress(h, value) {
-      const trimmed = value.trim();
-      const effective = h.manual_address || h.address || '';
-      if (trimmed === effective) return;           // no change
-      if (!trimmed && !h.manual_address) return;  // was empty, still empty
-      h.manual_address = trimmed || null;
-      h.lat = null;
-      h.lng = null;
-      h.geocode_failed = false;
-      if (this._markerLayer) {
-        const m = this._markerMap[h.internal_id];
-        if (m) { this._markerLayer.removeLayer(m); delete this._markerMap[h.internal_id]; }
-      }
-      this._savingAddressId = h.internal_id;
-      this._savedAddressId = null;
-      try {
-        await api('PATCH', `/houses/${h.internal_id}`, { manual_address: trimmed || null });
-        this._savingAddressId = null;
-        this._savedAddressId = h.internal_id;
-        setTimeout(() => { if (this._savedAddressId === h.internal_id) this._savedAddressId = null; }, 2000);
-        // Trigger geocoding when setting a new manual address OR when clearing
-        // one (falls back to the original scraped address).
-        if (trimmed || h.address) {
-          this._geocodeAfterAddressEdit();
-          // If editing from the detail modal, geocode this house individually
-          // and refresh the modal when done.
-          if (this.detailHouse?.internal_id === h.internal_id) {
-            this._geocodeSingleHouseForModal(h.internal_id);
-          }
-        }
-      } catch (e) {
-        this._savingAddressId = null;
-        console.error('Error saving manual address', e);
-      }
-    },
-
-    async _geocodeSingleHouseForModal(houseId) {
-      this._geocodingDetailHouseId = houseId;
-      try {
-        const data = await api('POST', `/houses/${houseId}/geocode`);
-        if (data.already_done) { this._geocodingDetailHouseId = null; return; }
-        // Poll until done, then refresh detailHouse
-        const runId = data.run_id;
-        const poll = async () => {
-          try {
-            const status = await api('GET', `/runs/${runId}`);
-            if (status.status === 'running') {
-              setTimeout(poll, 1500);
-            } else {
-              this._geocodingDetailHouseId = null;
-              if (status.status === 'done' && this.detailHouse?.internal_id === houseId) {
-                const updated = await api('GET', `/houses/${houseId}`);
-                // Merge lat/lng/geocode_failed back into detailHouse and the houses list
-                Object.assign(this.detailHouse, {
-                  lat: updated.lat, lng: updated.lng, geocode_failed: updated.geocode_failed,
-                });
-                const idx = this.houses.findIndex(h => h.internal_id === houseId);
-                if (idx !== -1) Object.assign(this.houses[idx], {
-                  lat: updated.lat, lng: updated.lng, geocode_failed: updated.geocode_failed,
-                });
-              }
-            }
-          } catch (e) { this._geocodingDetailHouseId = null; }
-        };
-        setTimeout(poll, 1500);
-      } catch (e) { this._geocodingDetailHouseId = null; }
-    },
-
-    async _geocodeAfterAddressEdit() {
-      if (!this.currentSession) return;
-      // If already polling a geocode run, the backend will include this house automatically
-      if (this._geocodeRunId) return;
-      try {
-        const res = await fetch(
-          `/api/users/${this.username}/sessions/${this.currentSession.id}/geocode`,
-          { method: 'POST' }
-        );
-        const data = await res.json();
-        if (data.already_done) return;
-        // already_running: another run just started — attach to it
-        this._geocodeRunId = data.run_id;
-        if (!this._geocodePoll) {
-          this._geocodePoll = setInterval(() => this.pollGeocode(data.run_id), 2000);
-        }
-      } catch (e) { console.error('Error triggering geocode after address edit', e); }
-    },
-
-    async clearGeodata() {
-      this.showConfirm(
-        'Borrar datos de geo',
-        '¿Borrar los datos de ubicación (lat/lng) de todas las propiedades de esta búsqueda? Podrás volver a geocodificar abriendo el mapa.',
-        async () => {
-          try {
-            await api('DELETE', `/users/${this.username}/sessions/${this.currentSession.id}/geodata`);
-            this.houses.forEach(h => { h.lat = null; h.lng = null; h.geocode_failed = false; });
-            if (this._markerLayer) this._markerLayer.clearLayers();
-          } catch (e) { this.showToast('Error al borrar los datos de geo.', 'error'); }
-        }
-      );
-    },
-
-    toggleSelectAll(event) {
-      if (event.target.checked) {
-        this.selectedHouses = this.pagedHouses.map(h => h.internal_id);
-      } else {
-        this.selectedHouses = [];
-      }
-    },
-
-    toggleSelectHouse(id) {
-      if (this.selectedHouses.includes(id)) {
-        this.selectedHouses = this.selectedHouses.filter(i => i !== id);
-      } else {
-        this.selectedHouses.push(id);
-      }
-    },
-
-    async batchSetReview(value) {
-      const ids = [...this.selectedHouses];
-      for (const id of ids) {
-        const h = this.houses.find(h => h.internal_id === id);
-        if (h) {
-          h.review = value;
-          try { await api('PATCH', `/houses/${id}`, { review: value }); } catch (e) { /* continue */ }
-        }
-      }
-      this.selectedHouses = [];
-      this.showToast(`${ids.length} propiedades actualizadas`, 'success');
-    },
-
-    openCompare() {
-      if (this.selectedHouses.length < 2) {
-        this.showToast('Seleccioná al menos 2 propiedades para comparar', 'error');
-        return;
-      }
-      if (this.selectedHouses.length > 5) {
-        this.showToast('Máximo 5 propiedades para comparar', 'error');
-        return;
-      }
-      this.compareHouses = this.selectedHouses.map(id => this.houses.find(h => h.internal_id === id)).filter(Boolean);
-      this.selectedHouses = [];
-    },
-
-    closeCompare() {
-      this.compareHouses = [];
-    },
-
-    async saveLabel() {
-      this.editingLabel = false;
-      const newLabel = (this.editLabel || '').trim();
-      if (!newLabel || newLabel === (this.currentSession?.label || '')) return;
-      try {
-        await api('PUT', `/users/${this.username}/sessions/${this.currentSession.id}`, { label: newLabel });
-        this.currentSession.label = newLabel;
-        const s = this.sessions.find(s => s.id === this.currentSession.id);
-        if (s) s.label = newLabel;
-        this.showToast('Nombre actualizado', 'success');
-      } catch (e) { this.showToast('Error al guardar el nombre.', 'error'); }
-    },
-
-    async saveFilter() {
-      if (!this.editFilter) return;
-      try {
-        await api('PUT', `/users/${this.username}/sessions/${this.currentSession.id}`, { search_filter: this.editFilter });
-        this.currentSession.search_filter = this.editFilter;
-        this.editingFilter = false;
-      } catch (e) { this.showToast('Error al guardar el filtro.', 'error'); }
-    },
-
-    async saveNotes(h, value) {
-      if (!h || value === (h.notes || '')) return;
-      h.notes = value;
-      try {
-        await api('PATCH', `/houses/${h.internal_id}`, { notes: value });
-        this.notesSaved = true;
-        setTimeout(() => { this.notesSaved = false; }, 2000);
-      } catch (e) { console.error('Error saving notes', e); }
-    },
-
-    async saveReview(h, value) {
-      h.review = value;
-      try { await api('PATCH', `/houses/${h.internal_id}`, { review: value }); } catch (e) { console.error('Error saving review', e); }
-    },
-
-    toggleReviewFilter(val) {
-      const i = this.filterReview.indexOf(val);
-      if (i !== -1) this.filterReview = this.filterReview.filter(v => v !== val);
-      else this.filterReview = [...this.filterReview, val];
-      this.tablePage = 1;
-    },
-
-    toggleFilterType(val) {
-      const i = this.filterType.indexOf(val);
-      if (i !== -1) this.filterType = this.filterType.filter(v => v !== val);
-      else this.filterType = [...this.filterType, val];
-      this.tablePage = 1;
-    },
-
-    toggleFilterStatus(val) {
-      const i = this.filterStatus.indexOf(val);
-      if (i !== -1) this.filterStatus = this.filterStatus.filter(v => v !== val);
-      else this.filterStatus = [...this.filterStatus, val];
-      this.tablePage = 1;
-    },
-
-    focusNextManualInput(current, direction) {
-      const inputs = [...document.querySelectorAll('input[placeholder="Dirección alternativa…"]')];
-      const idx = inputs.indexOf(current);
-      const next = inputs[idx + direction];
-      if (next) next.focus();
-    },
-
-    async triggerRun() {
-      try {
-        const data = await api('POST', `/users/${this.username}/sessions/${this.currentSession.id}/run`);
-        this.runId = data.run_id; this.runSessionId = this.currentSession.id; this.runDismissed = false;
-        this.runStatus = { status: 'running', message: 'Iniciando...', progress: 0, total: 0 };
-        this.startPolling();
-      } catch (e) { this.showToast('Error al iniciar la búsqueda.', 'error'); }
-    },
-
-    async dismissRun() {
-      if (this.isRunning && this.runId) {
-        try { await api('DELETE', `/runs/${this.runId}`); } catch (e) {}
-        this.stopPolling();
-      }
-      this.runDismissed = true;
-    },
-
-    startPolling() {
-      this.stopPolling();
-      this._pollInterval = setInterval(() => this.pollRun(), 2000);
-    },
-
-    stopPolling() {
-      if (this._pollInterval) { clearInterval(this._pollInterval); this._pollInterval = null; }
-    },
-
-    async pollRun() {
-      if (!this.runId) return;
-      try {
-        this.runStatus = await api('GET', `/runs/${this.runId}`);
-        if (this.runStatus.status !== 'running') {
-          this.stopPolling();
-          if (this.runStatus.status === 'done') await this.selectSession(this.currentSession.id);
-        }
-      } catch (e) { this.stopPolling(); }
-    },
-
-    setSort(col) {
-      if (this.sortBy === col) { this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc'; }
-      else { this.sortBy = col; this.sortDir = 'asc'; }
-      this.tablePage = 1;
-    },
-
-    sortIndicator(col) {
-      if (this.sortBy !== col) return '';
-      return this.sortDir === 'asc' ? '↑' : '↓';
-    },
-
-    priceChangePct(h) {
-      if (!h.previous_prices || h.previous_prices.length === 0) return null;
-      const first = h.previous_prices[0];
-      if (!h.price || !first || !first.price) return null;
-      if (h.currency !== first.currency) return null;
-      const pct = ((h.price - first.price) / first.price) * 100;
-      if (Math.abs(pct) < 0.5) return null;
-      return pct;
-    },
-
-    formatPrice(price, currency) {
-      if (price == null) return '—';
-      const formatted = new Intl.NumberFormat('es-AR').format(Math.round(price));
-      return currency === 'USD' ? `USD ${formatted}` : `$ ${formatted}`;
-    },
-
-    formatDate(iso) {
-      if (!iso) return '—';
-      return new Date(iso).toLocaleString('es-AR', {
-        day: '2-digit', month: '2-digit', year: 'numeric',
-        hour: '2-digit', minute: '2-digit',
-      });
-    },
-
-    formatDateOnly(iso) {
-      if (!iso) return '—';
-      return new Date(iso).toLocaleDateString('es-AR', {
-        day: '2-digit', month: '2-digit', year: 'numeric',
-      });
-    },
-
-    timeAgo(iso) {
-      if (!iso) return '';
-      const diff = Date.now() - new Date(iso).getTime();
-      const mins = Math.floor(diff / 60000);
-      if (mins < 1) return 'ahora';
-      if (mins < 60) return `hace ${mins}m`;
-      const hours = Math.floor(mins / 60);
-      if (hours < 24) return `hace ${hours}h`;
-      const days = Math.floor(hours / 24);
-      if (days < 7) return `hace ${days}d`;
-      return new Date(iso).toLocaleDateString('es-AR');
-    },
-  };
-}
-</script>
+<script src="map.js"></script>
+<script src="app.js"></script>
   <!-- Toast notification -->
   <div x-show="toastMessage" x-cloak x-transition
     :class="{
