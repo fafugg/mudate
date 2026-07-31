@@ -29,6 +29,17 @@
 </head>
 <body class="bg-slate-50 min-h-screen font-sans text-slate-800" :class="{ 'overflow-hidden': compareHouses.length > 0 }" x-data="app()" x-cloak>
 
+  <!-- Loading overlay (global) — session loads + view switching (map → table) -->
+  <div x-show="loading || switchingView" class="fixed inset-0 bg-white/70 dark:bg-slate-900/70 flex items-center justify-center z-[1500]">
+    <div class="flex items-center gap-3 bg-white dark:bg-slate-800 rounded-xl shadow-lg px-6 py-4">
+      <svg class="animate-spin h-5 w-5 text-blue-500" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+      </svg>
+      <span class="text-sm text-slate-600 dark:text-slate-300" x-text="switchingView ? 'Cambiando vista…' : (loadingMsg || 'Cargando...')"></span>
+    </div>
+  </div>
+
   <!-- ── LOGIN ── -->
   <div x-show="screen === 'login'" class="flex items-center justify-center min-h-screen p-4">
     <div class="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm relative">
@@ -303,16 +314,6 @@
       <p class="text-slate-500 text-sm font-medium mt-1">¡Creá una para empezar a rastrear propiedades!</p>
     </div>
 
-    <!-- Loading overlay -->
-    <div x-show="loading" class="fixed inset-0 bg-white/70 flex items-center justify-center z-50">
-      <div class="flex items-center gap-3 bg-white rounded-xl shadow-lg px-6 py-4">
-        <svg class="animate-spin h-5 w-5 text-blue-500" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
-        </svg>
-        <span class="text-sm text-slate-600" x-text="loadingMsg || 'Cargando...'"></span>
-      </div>
-    </div>
   </div>
 
   <!-- ── SESSION DETAIL ── -->
@@ -562,7 +563,7 @@
 
         <!-- Tabla/Mapa toggle -->
         <div class="flex rounded-lg border border-slate-200 bg-white overflow-hidden shrink-0">
-          <button @click="setView('table')"
+          <button @click="mapView && setView('table')"
             :class="!mapView ? 'bg-slate-800 text-white font-semibold' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'"
             class="px-3 py-1.5 text-xs transition flex items-center gap-1.5 whitespace-nowrap">
             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -570,7 +571,7 @@
             </svg>
             <span x-show="!isNarrow">Tabla</span>
           </button>
-          <button @click="setView('map')"
+          <button @click="!mapView && setView('map')"
             :class="mapView ? 'bg-slate-800 text-white font-semibold' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'"
             class="px-3 py-1.5 text-xs transition border-l border-slate-200 flex items-center gap-1.5 whitespace-nowrap">
             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -674,7 +675,10 @@
       <button @click="selectedHouses = []" class="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 ml-auto">Limpiar</button>
     </div>
 
-    <div x-show="!mapView" class="hidden md:block bg-white rounded-xl border border-slate-200 table-wrap shadow-sm">
+    <!-- Desktop table — unmounted in map view so Alpine isn't re-evaluating
+         hundreds of rows while the map is being panned/zoomed -->
+    <template x-if="!mapView">
+    <div class="hidden md:block bg-white rounded-xl border border-slate-200 table-wrap shadow-sm">
       <table class="min-w-full text-xs">
         <thead class="bg-slate-50 border-b border-slate-200">
           <tr>
@@ -787,9 +791,11 @@
         </tbody>
       </table>
     </div>
+    </template>
 
     <!-- Mobile card list -->
-    <div x-show="!mapView" class="space-y-2 md:hidden">
+    <template x-if="!mapView">
+    <div class="space-y-2 md:hidden">
       <template x-for="(h, i) in pagedHouses" :key="h.internal_id">
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm px-4 py-3 flex flex-col gap-2"
              :class="h.status === 'removed' ? 'opacity-50' : ''">
@@ -851,9 +857,11 @@
         </div>
       </div>
     </div>
+    </template>
 
     <!-- Pagination controls -->
-    <div x-show="totalPages > 1 && !mapView" class="flex items-center justify-between mt-3 text-xs text-slate-500">
+    <template x-if="totalPages > 1 && !mapView">
+    <div class="flex items-center justify-between mt-3 text-xs text-slate-500">
       <span x-text="`${(tablePage - 1) * tablePageSize + 1}–${Math.min(tablePage * tablePageSize, filteredHouses.length)} de ${filteredHouses.length} propiedades`"></span>
       <div class="flex items-center gap-1">
         <button @click="tablePage = Math.max(1, tablePage - 1)" :disabled="tablePage === 1"
@@ -867,12 +875,17 @@
           class="px-3 py-1.5 rounded border border-slate-200 hover:border-blue-300 disabled:opacity-40 disabled:cursor-not-allowed">Sig →</button>
       </div>
     </div>
+    </template>
 
     <!-- ── MAP VIEW ── -->
     <!-- overflow-hidden removed: it clips Leaflet's zoom-animation layers.
          clip-path achieves the rounded corners without blocking the SVG/canvas
          layers that Leaflet temporarily expands during zoom. -->
-    <div x-show="mapView" id="map-container" class="relative rounded-xl border border-slate-200 shadow-sm"
+    <!-- Map is unmounted (x-if) when in table view, mirroring the table; the
+         Leaflet instance is destroyed in destroyMap() so nothing keeps running
+         in the background. -->
+    <template x-if="mapView">
+    <div id="map-container" class="relative rounded-xl border border-slate-200 shadow-sm"
          style="clip-path: inset(0 round 0.75rem)">
       <div id="map" class="w-full h-full"></div>
 
@@ -923,6 +936,7 @@
         </template>
       </div>
     </div>
+    </template>
   </div>
 
   <!-- ── MODALS ──
