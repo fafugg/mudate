@@ -901,10 +901,10 @@
           <div x-show="geocodeStatus?.total > 0" class="mt-1.5">
             <div class="h-1.5 bg-slate-200 rounded-full">
               <div class="h-1.5 bg-blue-500 rounded-full transition-all"
-                :style="`width:${Math.round((geocodeStatus.progress/geocodeStatus.total)*100)}%`"></div>
+                :style="geocodeStatus?.total > 0 ? `width:${Math.round((geocodeStatus.progress/geocodeStatus.total)*100)}%` : 'width:0%'"></div>
             </div>
             <p class="text-xs text-slate-400 mt-0.5"
-              x-text="`${geocodeStatus.progress} / ${geocodeStatus.total}`"></p>
+              x-text="geocodeStatus?.total > 0 ? `${geocodeStatus.progress} / ${geocodeStatus.total}` : ''"></p>
           </div>
         </div>
         <button @click="skipGeocode()"
