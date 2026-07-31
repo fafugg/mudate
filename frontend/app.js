@@ -424,6 +424,8 @@ function app() {
     },
 
     async goBack() {
+      this.loading = true; this.loadingMsg = 'Cargando...';
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       this.stopGeocoding();
       this.filterReview = ['', 'en_duda', 'interesante', 'contactar', 'descartada'];
       this.filterType = [];
@@ -443,6 +445,10 @@ function app() {
       } catch (e) { /* show stale list if fetch fails */ }
       this.screen = 'sessions';
       window.scrollTo(0, 0);
+      try {
+        await this.$nextTick();
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      } finally { this.loading = false; this.loadingMsg = ''; }
     },
 
     async login() {
