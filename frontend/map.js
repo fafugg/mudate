@@ -12,6 +12,7 @@ const mapMethods = {
   _geocodeRunId: null,
   _geocodingDetailHouseId: null,
   _mapFocusHouse: null,
+  _focusActive: false,
   _markerMap: {},
   mapMissingCount: 0,
   mapLegend: MAP_LEGEND,
@@ -39,47 +40,82 @@ const mapMethods = {
     if (!this._map) return;
     if (!this._markerLayer) {
       this._markerLayer = L.layerGroup().addTo(this._map);
-    } else {
-      this._markerLayer.clearLayers();
     }
-    this._markerMap = {};
-    const placed = this.filteredHouses.filter(h => h.lat != null && h.lng != null);
-    this.mapMissingCount = this.filteredHouses.filter(h => h.lat == null && (h.manual_address || h.address)).length;
-    placed.forEach(h => {
-      const marker = L.circleMarker([h.lat, h.lng], {
-        radius: 9,
-        fillColor: this.pinColor(h),
-        color: '#ffffff',
-        weight: 2,
-        opacity: 1,
-        fillOpacity: 0.85,
-      });
-      marker.bindTooltip(
-        `<b>${this.escHtml(h.manual_address || h.address || '')}</b><br>${this.escHtml(this.formatPrice(h.price, h.currency))}`,
-        { sticky: true }
-      );
-      marker.on('click', () => this.openDetail(h));
-      this._markerLayer.addLayer(marker);
-      this._markerMap[h.internal_id] = marker;
-    });
-    if (placed.length > 0 && !this._mapUserMoved && !this._mapFocusHouse) this.fitBounds();
 
-    if (this._mapFocusHouse) {
+    const all = this.filteredHouses;
+    const placed = all.filter(h => h.lat != null && h.lng != null);
+    this.mapMissingCount = all.filter(h => h.lat == null && (h.manual_address || h.address)).length;
+
+    // Incremental update: remove markers for houses no longer in filtered set
+    const placedIds = new Set(placed.map(h => h.internal_id));
+    for (const id of Object.keys(this._markerMap)) {
+      if (!placedIds.has(id)) {
+        const m = this._markerMap[id];
+        this._markerLayer.removeLayer(m);
+        delete this._markerMap[id];
+      }
+    }
+
+    // Add/update markers incrementally
+    placed.forEach(h => {
+      const id = h.internal_id;
+      const existing = this._markerMap[id];
+      if (existing) {
+        // Update existing marker
+        existing.setLatLng([h.lat, h.lng]);
+        existing.setStyle({ fillColor: this.pinColor(h) });
+        existing.setTooltipContent(
+          `<b>${this.escHtml(h.manual_address || h.address || '')}</b><br>${this.escHtml(this.formatPrice(h.price, h.currency))}`
+        );
+      } else {
+        // Create new marker
+        const marker = L.circleMarker([h.lat, h.lng], {
+          radius: 9,
+          fillColor: this.pinColor(h),
+          color: '#ffffff',
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.85,
+        });
+        marker.bindTooltip(
+          `<b>${this.escHtml(h.manual_address || h.address || '')}</b><br>${this.escHtml(this.formatPrice(h.price, h.currency))}`,
+          { sticky: true }
+        );
+        marker.on('click', () => this.openDetail(h));
+        this._markerLayer.addLayer(marker);
+        this._markerMap[id] = marker;
+      }
+    });
+
+    // Auto-fit bounds when opening the map without a focus target
+    if (placed.length > 0 && !this._mapUserMoved && !this._focusActive) this.fitBounds();
+
+    // Focus on a specific house (from viewInMap)
+    if (this._mapFocusHouse && !this._focusActive) {
       const fh = this._mapFocusHouse;
+      this._focusActive = true;
       this._mapFocusHouse = null;
       if (fh.lat != null) {
-        this._map.flyTo([fh.lat, fh.lng], 16, { animate: true, duration: 0.8 });
+        this._map.flyTo([fh.lat, fh.lng], 15, { animate: true, duration: 0.8 });
         const m = this._markerMap[fh.internal_id];
         if (m) {
-          m.setRadius(16);
-          m.setStyle({ weight: 4, color: '#1d4ed8', fillOpacity: 1 });
+          m.setRadius(13);
+          m.setStyle({ weight: 3, color: '#1d4ed8', fillOpacity: 1 });
           m.bringToFront();
           m.openTooltip();
-          setTimeout(() => {
-            m.setRadius(9);
-            m.setStyle({ weight: 2, color: '#ffffff', fillOpacity: 0.85 });
-          }, 3000);
+          this._map.once('moveend', () => {
+            this._focusActive = false;
+            const tm = this._markerMap[fh.internal_id];
+            if (tm) {
+              tm.setRadius(9);
+              tm.setStyle({ weight: 2, color: '#ffffff', fillOpacity: 0.85 });
+            }
+          });
+        } else {
+          this._focusActive = false;
         }
+      } else {
+        this._focusActive = false;
       }
     }
   },
@@ -90,6 +126,13 @@ const mapMethods = {
     const layers = this._markerLayer.getLayers();
     if (layers.length > 0) {
       this._map.fitBounds(L.featureGroup(layers).getBounds().pad(0.35), { maxZoom: 14 });
+    }
+  },
+
+  updateMarkerColor(h) {
+    const m = this._markerMap[h.internal_id];
+    if (m) {
+      m.setStyle({ fillColor: this.pinColor(h) });
     }
   },
 

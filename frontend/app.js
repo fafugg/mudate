@@ -383,6 +383,7 @@ function app() {
       this.mapView = false;
       this.actionsOpen = false;
       this._mapFocusHouse = null;
+      this._focusActive = false;
       this._markerMap = {};
       if (this._markerLayer) { this._markerLayer.clearLayers(); }
       this.screen = 'login';
@@ -453,6 +454,7 @@ function app() {
         this.filterRealEstate = '';
         this.filtersOpen = false;
         this.mapView = false;
+        this._focusActive = false;
         this._markerMap = {};
         if (this._markerLayer) { this._markerLayer.clearLayers(); }
         this.stopGeocoding();
@@ -545,6 +547,7 @@ function app() {
     },
 
     async viewInMap(h) {
+      this._focusActive = false;
       this._mapFocusHouse = h;
       await this.closeDetail();
       await this.setView('map');
@@ -588,6 +591,9 @@ function app() {
     async saveReview(h, value) {
       h.review = value;
       try { await api('PATCH', `/houses/${h.internal_id}`, { review: value }); } catch (e) { console.error('Error saving review', e); }
+      if (this.mapView && this._markerMap) {
+        this.updateMarkerColor(h);
+      }
     },
 
     async saveNotes(h, value) {
@@ -804,6 +810,9 @@ function app() {
         if (h) {
           h.review = value;
           try { await api('PATCH', `/houses/${id}`, { review: value }); } catch (e) { /* continue */ }
+          if (this.mapView && this._markerMap) {
+            this.updateMarkerColor(h);
+          }
         }
       }
       this.selectedHouses = [];
