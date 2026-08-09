@@ -20,7 +20,7 @@ function app() {
     runDismissed: false,
     _pollInterval: null,
     filterReview: ['', 'en_duda', 'interesante', 'contactar', 'descartada'],
-    filterStatus: [],
+    filterStatus: ['active'],
     filterType: [],
     filterMinPrice: '',
     filterMaxPrice: '',
@@ -429,7 +429,7 @@ function app() {
       this.stopGeocoding();
       this.filterReview = ['', 'en_duda', 'interesante', 'contactar', 'descartada'];
       this.filterType = [];
-      this.filterStatus = [];
+      this.filterStatus = ['active'];
       this.filterMinPrice = '';
       this.filterMaxPrice = '';
       this.filterAddress = '';
@@ -491,7 +491,7 @@ function app() {
         this.tablePage = 1;
         this.filterReview = ['', 'en_duda', 'interesante', 'contactar', 'descartada'];
         this.filterType = [];
-        this.filterStatus = [];
+        this.filterStatus = ['active'];
         this.filterMinPrice = '';
         this.filterMaxPrice = '';
         this.filterAddress = '';
