@@ -4,10 +4,13 @@ Handles merging new listings into the database, deduplication across sessions,
 price history tracking, and marking removed properties.
 """
 
+import logging
 import uuid
 from typing import Any, Dict, List
 
 from storage import atomic_update, _now
+
+logger = logging.getLogger(__name__)
 
 
 def persist_listings(
@@ -95,11 +98,35 @@ def persist_listings(
 
         # Houses that were in THIS session but not seen in this run → removed.
         # We deliberately do NOT touch houses from other sessions here.
-        for hid in current_session_hids:
-            if hid not in matched_hids and hid in db["houses"]:
-                db["houses"][hid]["status"] = "removed"
-                db["houses"][hid]["removed_at"] = now
-                new_ids.append(hid)
+        #
+        # SAFEGUARD: If the scraper returned far fewer listings than the session
+        # previously had, this likely indicates a partial scrape (e.g. Cloudflare
+        # blocked pagination).  In that case, skip marking houses as removed to
+        # avoid mass data loss — only add new listings and update matched ones.
+        previous_active_count = sum(
+            1 for hid in current_session_hids
+            if hid in db["houses"] and db["houses"][hid].get("status") == "active"
+        )
+        matched_count = len(matched_hids)
+        if previous_active_count > 0 and matched_count < previous_active_count * 0.5:
+            logger.warning(
+                "Partial scrape detected for session %s: got %d listings but "
+                "session had %d active houses. Skipping removal of %d houses "
+                "to prevent data loss.",
+                session_id, matched_count, previous_active_count,
+                previous_active_count - matched_count,
+            )
+            # Still add previously-active houses to the ID list so they
+            # remain associated with the session.
+            for hid in current_session_hids:
+                if hid not in matched_hids and hid in db["houses"]:
+                    new_ids.append(hid)
+        else:
+            for hid in current_session_hids:
+                if hid not in matched_hids and hid in db["houses"]:
+                    db["houses"][hid]["status"] = "removed"
+                    db["houses"][hid]["removed_at"] = now
+                    new_ids.append(hid)
 
         db["users"][username]["sessions"][session_id]["last_executed"] = now
         # Deduplicate while preserving order (matched first, removed last)

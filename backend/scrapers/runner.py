@@ -89,6 +89,14 @@ async def run_scrape(
                 cancel_check=should_cancel,
                 existing_ids=existing_ids,
             )
+            # Check for partial scrape results
+            paging_info = getattr(scraper, "last_paging_info", None)
+            if paging_info:
+                expected = paging_info.get("total", 0)
+                if expected and len(listings) < expected * 0.5:
+                    runs[run_id]["errors"].append(
+                        f"{engine}: resultados parciales ({len(listings)}/{expected})"
+                    )
             # Tag each listing with its engine so persist_listings uses the correct one
             for listing in listings:
                 listing["search_engine"] = engine
