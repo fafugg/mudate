@@ -98,7 +98,7 @@ class ZonapropScraper(BaseScraper):
     ) -> List[Dict[str, Any]]:
         async with self.launch_browser() as page:
             # ── Phase 1: collect raw card data clicking through all pages ──
-            all_raw_cards = await _collect_all_pages(
+            all_raw_cards, paging_info = await _collect_all_pages(
                 page, search_filter, progress_callback, cancel_check
             )
 
@@ -157,6 +157,16 @@ class ZonapropScraper(BaseScraper):
             )
             results = [r for r in raw_results if r]
 
+        # Warn if we got significantly fewer results than expected
+        expected = paging_info.get("total", 0) if paging_info else 0
+        if expected and len(results) < expected * 0.5:
+            logger.warning(
+                "ZP partial scrape: got %d listings but expected ~%d (%d pages). "
+                "Cloudflare may have blocked pagination.",
+                len(results), expected, paging_info.get("totalPages", 0),
+            )
+        self.last_paging_info = paging_info
+
         return results
 
 
@@ -167,7 +177,7 @@ async def _collect_all_pages(
     search_filter: str,
     progress_callback,
     cancel_check=None,
-) -> list:
+) -> tuple:
     all_raw: list = []
     seen_ids: set = set()
 
@@ -177,19 +187,28 @@ async def _collect_all_pages(
     await asyncio.sleep(2)
 
     if resp and resp.status == 403:
-        return []
+        return [], {}
 
     await _accept_cookies(page)
     await asyncio.sleep(1)
 
+    # Extract total pages from __PRELOADED_STATE__ on first load.
+    paging_info = await _extract_paging_info(page)
+    total_pages = paging_info.get("totalPages", 1)
+    total_results = paging_info.get("total", 0)
+    logger.info(
+        "ZP paging info: %d total results, %d pages", total_results, total_pages
+    )
+
     current_page = 1
-    while current_page <= 500:
+    prev_card_ids: set = set()
+    while current_page <= total_pages:
         if cancel_check and cancel_check():
             break
         if progress_callback:
             progress_callback(
-                f"Cargando página {current_page} — {len(all_raw)} propiedades",
-                len(all_raw), len(all_raw),
+                f"Página {current_page}/{total_pages} — {len(all_raw)}/{total_results} propiedades",
+                len(all_raw), total_results,
             )
 
         cards = await _extract_cards_js(page)
@@ -209,46 +228,68 @@ async def _collect_all_pages(
         if added == 0:
             break
 
+        if current_page >= total_pages:
+            break
+
+        next_page = current_page + 1
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         await asyncio.sleep(0.5)
 
-        next_page = current_page + 1
-        clicked = await page.evaluate(f"""() => {{
-            const target = String({next_page});
-            const link = [...document.querySelectorAll('a[href]')].find(a =>
-                a.textContent.trim() === target &&
-                /pagina/i.test(a.href)
-            );
-            if (link) {{ link.click(); return true; }}
-            return false;
-        }}""")
+        # ── Navigate to next page: URL first (reliable), click as fallback ───
+        navigated = False
 
-        if not clicked:
+        # Attempt 1: direct URL navigation (most reliable in headless mode)
+        next_url = f"{BASE_URL}{search_filter}-pagina-{next_page}.html"
+        try:
+            nav_resp = await page.goto(
+                next_url, wait_until="domcontentloaded", timeout=30000
+            )
+            await asyncio.sleep(2)
+            if nav_resp and nav_resp.status == 200:
+                navigated = True
+        except Exception:
+            pass
+
+        # Attempt 2: click the pagination element via data-qa attribute
+        if not navigated:
+            clicked = await page.evaluate(f"""() => {{
+                const el = document.querySelector('[data-qa="PAGING_{next_page}"]');
+                if (el) {{ el.click(); return true; }}
+                return false;
+            }}""")
+            if clicked:
+                for _ in range(30):
+                    await asyncio.sleep(0.5)
+                    if f"pagina-{next_page}" in page.url:
+                        navigated = True
+                        break
+
+        if not navigated:
+            logger.warning(
+                "ZP pagination failed at page %d — stopping", next_page
+            )
             break
 
-        first_id_before = cards[0].get("id", "") if cards else ""
-        url_changed = False
-        for _ in range(30):
-            await asyncio.sleep(0.5)
-            if f"pagina-{next_page}" in page.url:
-                url_changed = True
-                break
-        if not url_changed:
-            break
-
+        # Wait for new content to load: compare ALL card IDs against previous page
+        current_card_ids = prev_card_ids
         for _ in range(20):
             await asyncio.sleep(0.5)
-            first_id_now = await page.evaluate("""() => {
-                const el = document.querySelector('[data-posting-type]');
-                return el ? (el.getAttribute('data-id') || '') : '';
+            new_ids = await page.evaluate("""() => {
+                return [...document.querySelectorAll('[data-posting-type]')]
+                    .map(el => el.getAttribute('data-id') || '')
+                    .filter(Boolean);
             }""")
-            if first_id_now and first_id_now != first_id_before:
+            new_set = set(new_ids)
+            if new_set and new_set != current_card_ids:
                 break
 
+        prev_card_ids = set(
+            c.get("id", "") for c in cards if c.get("id")
+        )
         await asyncio.sleep(random.uniform(0.5, 1.0))
         current_page = next_page
 
-    return all_raw
+    return all_raw, paging_info
 
 
 # ── Cookie consent ────────────────────────────────────────────────────────────
@@ -263,6 +304,52 @@ async def _accept_cookies(page) -> None:
             await btn.click()
     except Exception:
         pass
+
+
+async def _extract_paging_info(page) -> dict:
+    """Extract total pages and total results from Zonaprop's __PRELOADED_STATE__.
+
+    Returns dict with keys: total, totalPages, currentPage, limit.
+    Returns empty dict on failure.
+    """
+    try:
+        info = await page.evaluate(r"""() => {
+            try {
+                const state = window.__PRELOADED_STATE__;
+                const paging = state?.listStore?.listPostings?.paging;
+                if (paging) {
+                    return {
+                        total: paging.total || 0,
+                        totalPages: paging.totalPages || 0,
+                        currentPage: paging.currentPage || 0,
+                        limit: paging.limit || 30,
+                    };
+                }
+            } catch(e) {}
+            return null;
+        }""")
+        if info and info.get("totalPages"):
+            return info
+    except Exception:
+        pass
+
+    # Fallback: extract total from <title> tag (e.g. "572 Casas o PH...")
+    try:
+        title = await page.title()
+        m = re.match(r"(\d+)", title)
+        if m:
+            total = int(m.group(1))
+            limit = 30
+            return {
+                "total": total,
+                "totalPages": (total + limit - 1) // limit,
+                "currentPage": 1,
+                "limit": limit,
+            }
+    except Exception:
+        pass
+
+    return {}
 
 
 # ── Card extraction (JS, one call per page) ───────────────────────────────────

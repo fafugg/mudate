@@ -78,6 +78,7 @@ class RemaxScraper(BaseScraper):
     ) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
         seen_ids: set = set()
+        total_items = 0
 
         async with self.launch_browser() as page:
             current_page = 0
@@ -90,9 +91,9 @@ class RemaxScraper(BaseScraper):
                 url = self._page_url(search_filter, current_page)
                 if progress_callback:
                     progress_callback(
-                        f"Cargando página {current_page + 1}/{total_pages} — {len(results)} propiedades",
+                        f"Página {current_page + 1}/{total_pages} — {len(results)}/{total_items} propiedades",
                         len(results),
-                        len(results),
+                        total_items,
                     )
 
                 await page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -118,7 +119,7 @@ class RemaxScraper(BaseScraper):
                     }"""
                 )
 
-                card_listings, total_pages = self._parse_ng_state(ng_state)
+                card_listings, total_pages, total_items = self._parse_ng_state(ng_state)
 
                 if not card_listings:
                     break
@@ -160,13 +161,14 @@ class RemaxScraper(BaseScraper):
                 current_page += 1
                 await asyncio.sleep(self.delay)
 
+        self.last_paging_info = {"total": total_items, "totalPages": total_pages} if total_items else {}
         return results
 
     def _parse_ng_state(self, ng_state: Any):
         """Parse the ng-state JSON to extract listings."""
         try:
             if not ng_state or not isinstance(ng_state, dict):
-                return [], 1
+                return [], 1, 0
 
             listings_data = None
             for key, value in ng_state.items():
@@ -186,7 +188,7 @@ class RemaxScraper(BaseScraper):
                         break
 
             if not listings_data:
-                return [], 1
+                return [], 1, 0
 
             data_list = listings_data.get("data", [])
             total_items = listings_data.get("totalItems", 0)
@@ -198,10 +200,10 @@ class RemaxScraper(BaseScraper):
                 if parsed and parsed.get("url"):
                     listings.append(parsed)
 
-            return listings, total_pages
+            return listings, total_pages, total_items
         except Exception as e:
             logger.error("REMAX ng-state parse error: %s: %s", type(e).__name__, e)
-            return [], 1
+            return [], 1, 0
 
 
 def _parse_remax_listing(item: dict) -> Optional[Dict[str, Any]]:

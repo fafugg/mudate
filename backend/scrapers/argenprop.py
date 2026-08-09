@@ -29,6 +29,8 @@ class ArgenpropScraper(BaseScraper):
         existing_ids: Optional[Set[str]] = None,
     ) -> List[Dict[str, Any]]:
         all_raw_cards: List[dict] = []
+        seen_ids: set = set()
+        total_items = 0
 
         async with self.launch_browser() as page:
             # ── Phase 1: Collect all card data from all pages ──────────────
@@ -42,9 +44,9 @@ class ArgenpropScraper(BaseScraper):
                 url = self._page_url(search_filter, current_page)
                 if progress_callback:
                     progress_callback(
-                        f"Cargando página {current_page}/{total_pages} — {len(all_raw_cards)} propiedades",
+                        f"Página {current_page}/{total_pages} — {len(all_raw_cards)}/{total_items} propiedades",
                         len(all_raw_cards),
-                        len(all_raw_cards),
+                        total_items,
                     )
 
                 resp = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -73,16 +75,20 @@ class ArgenpropScraper(BaseScraper):
                 added = 0
                 for c in cards:
                     cid = c.get("id", "")
-                    if cid and cid in {x.get("id") for x in all_raw_cards}:
+                    if cid and cid in seen_ids:
                         continue
+                    if cid:
+                        seen_ids.add(cid)
                     all_raw_cards.append(c)
                     added += 1
 
                 if added == 0:
                     break
 
-                # Extract total pages from pagination
+                # Extract total pages and total items from pagination / title
                 total_pages = await _extract_total_pages(page)
+                if not total_items:
+                    total_items = await _extract_total_items(page)
 
                 current_page += 1
                 await asyncio.sleep(self.delay)
@@ -128,6 +134,7 @@ class ArgenpropScraper(BaseScraper):
             )
             results = [r for r in raw_results if r]
 
+        self.last_paging_info = {"total": total_items, "totalPages": total_pages} if total_items else {}
         return results
 
 
@@ -209,6 +216,18 @@ async def _extract_total_pages(page) -> int:
     except Exception as e:
         logger.warning("AP pagination extraction failed: %s", e)
         return 1
+
+
+async def _extract_total_items(page) -> int:
+    """Extract total result count from the page title (e.g. '572 Casas o PH...')."""
+    try:
+        title = await page.title()
+        m = re.match(r"(\d+)", title)
+        if m:
+            return int(m.group(1))
+    except Exception:
+        pass
+    return 0
 
 
 # ── Card parsing ──────────────────────────────────────────────────────────────

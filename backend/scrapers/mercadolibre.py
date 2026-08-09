@@ -9,6 +9,62 @@ from .base import BaseScraper, UA, coerce_float, coerce_int
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://inmuebles.mercadolibre.com.ar"
+ML_PAGE_SIZE = 48  # MercadoLibre shows 48 results per page
+
+
+async def _extract_paging_info(page) -> dict:
+    """Extract total pages and total results from MercadoLibre's __PRELOADED_STATE__.
+
+    Returns dict with keys: total, totalPages.
+    Returns empty dict on failure.
+    """
+    try:
+        info = await page.evaluate(r"""() => {
+            try {
+                const state = window.__PRELOADED_STATE__;
+                // ML embeds results count in various places — try common paths
+                if (state && state.initialState) {
+                    const s = state.initialState;
+                    // path1: results dict
+                    if (s.results && s.results.paging) {
+                        const p = s.results.paging;
+                        return { total: p.total || 0, totalPages: Math.ceil((p.total || 0) / (p.limit || 48)) };
+                    }
+                }
+            } catch(e) {}
+            return null;
+        }""")
+        if info and info.get("total"):
+            return info
+    except Exception:
+        pass
+
+    # Fallback: extract from "Resultados: N" text in the page header
+    try:
+        text = await page.evaluate(r"""() => {
+            const el = document.querySelector('[class*="quantity-results"], [class*="results-count"], .ui-search-search-result__quantity-results');
+            return el ? el.textContent : '';
+        }""")
+        if text:
+            m = re.search(r"([\d.]+)\s*resultado", text, re.IGNORECASE)
+            if m:
+                total = int(m.group(1).replace(".", ""))
+                return {"total": total, "totalPages": max(1, (total + ML_PAGE_SIZE - 1) // ML_PAGE_SIZE)}
+    except Exception:
+        pass
+
+    # Fallback: extract from <title> tag (e.g. "1.234 resultados...")
+    try:
+        title = await page.title()
+        m = re.match(r"([\d.]+)", title)
+        if m:
+            total = int(m.group(1).replace(".", ""))
+            if total > 0:
+                return {"total": total, "totalPages": max(1, (total + ML_PAGE_SIZE - 1) // ML_PAGE_SIZE)}
+    except Exception:
+        pass
+
+    return {}
 
 
 class MercadoLibreScraper(BaseScraper):
@@ -30,7 +86,9 @@ class MercadoLibreScraper(BaseScraper):
     ) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
         seen_ids: set = set()
-        MAX_PAGES = 500
+        total_items = 0
+        total_pages = 500  # fallback cap until paging info is extracted
+        consecutive_empty = 0
 
         async with self.launch_browser() as search_page:
             context = search_page.context
@@ -41,15 +99,22 @@ class MercadoLibreScraper(BaseScraper):
                 progress_callback(
                     f"Cargando página 1 — {len(results)} propiedades",
                     len(results),
-                    len(results),
+                    total_items,
                 )
 
             await search_page.goto(url, wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(2)
 
+            # Extract paging info from first page
+            paging_info = await _extract_paging_info(search_page)
+            if paging_info:
+                total_items = paging_info.get("total", 0)
+                total_pages = paging_info.get("totalPages", 500)
+                logger.info("ML paging info: %d total results, %d pages", total_items, total_pages)
+
             # Extract listings from all pages via click-based pagination
             current_page = 1
-            while current_page <= MAX_PAGES:
+            while current_page <= total_pages:
                 if cancel_check and cancel_check():
                     break
 
@@ -60,6 +125,7 @@ class MercadoLibreScraper(BaseScraper):
                     break
 
                 # Process each listing using a separate tab for details
+                page_added = 0
                 for card in card_listings:
                     se_id = card.get("search_engine_id") or ""
                     if se_id in seen_ids:
@@ -70,9 +136,9 @@ class MercadoLibreScraper(BaseScraper):
                     if progress_callback:
                         action = "Verificando precio" if is_known else "Descargando detalle"
                         progress_callback(
-                            f"Pág {current_page} — {action} {len(results) + 1}/{len(results) + len(card_listings)}",
+                            f"Pág {current_page}/{total_pages} — {action} {len(results) + 1}/{total_items}",
                             len(results),
-                            len(results) + len(card_listings),
+                            total_items,
                         )
 
                     if not is_known and card.get("url"):
@@ -88,18 +154,46 @@ class MercadoLibreScraper(BaseScraper):
                         card.get("price"), card.get("covered_m2") or card.get("total_m2")
                     )
                     results.append(card)
+                    page_added += 1
 
                     if not is_known:
                         await asyncio.sleep(0.5)
 
-                # Try to click "Siguiente" (Next) button
+                # Track consecutive pages with zero new listings
+                if page_added == 0:
+                    consecutive_empty += 1
+                    if consecutive_empty >= 2:
+                        logger.warning(
+                            "ML pagination stopped: %d consecutive pages with no new listings",
+                            consecutive_empty,
+                        )
+                        break
+                else:
+                    consecutive_empty = 0
+
+                # Try to click "Siguiente" (Next) button, fall back to URL navigation
                 next_clicked = await self._click_next_page(search_page)
+                if not next_clicked:
+                    # Fallback: navigate directly via URL
+                    next_offset = (current_page) * ML_PAGE_SIZE + 1
+                    next_url = self._page_url(search_filter, next_offset)
+                    try:
+                        nav_resp = await search_page.goto(
+                            next_url, wait_until="domcontentloaded", timeout=30000
+                        )
+                        await asyncio.sleep(2)
+                        if nav_resp and nav_resp.status == 200:
+                            next_clicked = True
+                    except Exception:
+                        pass
+
                 if not next_clicked:
                     break
 
                 current_page += 1
                 await asyncio.sleep(self.delay)
 
+        self.last_paging_info = {"total": total_items, "totalPages": total_pages} if total_items else {}
         return results
 
     async def _click_next_page(self, page) -> bool:
