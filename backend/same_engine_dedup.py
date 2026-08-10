@@ -149,6 +149,8 @@ def _summarize(h: dict) -> dict:
         "covered_m2": h.get("covered_m2"),
         "review": h.get("review"),
         "url": h.get("url", ""),
+        "images": h.get("images", []),
+        "description": h.get("description", ""),
     }
 
 

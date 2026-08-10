@@ -74,6 +74,8 @@ function app() {
     sameEngineDedupLoading: false,
     sameEngineDedupSelected: [],
     sameEngineDedupOpen: false,
+    sameEngineDedupExpanded: [],
+    sameEngineDedupDescExpanded: {},
 
     // ── Spread map state & methods ───────────────────────────────────────────
     ...mapMethods,
@@ -588,6 +590,8 @@ function app() {
             if (dedup && dedup.count > 0) {
               this.sameEngineDedupGroups = dedup.groups;
               this.sameEngineDedupSelected = dedup.groups.map(() => true);
+              this.sameEngineDedupExpanded = dedup.groups.map(() => false);
+              this.sameEngineDedupDescExpanded = {};
               setTimeout(() => { this.sameEngineDedupOpen = true; }, 500);
             }
           }
@@ -980,6 +984,8 @@ function app() {
         const data = await api('POST', `/users/${this.username}/sessions/${this.currentSession.id}/same-engine-dedup/preview`);
         this.sameEngineDedupGroups = data.groups || [];
         this.sameEngineDedupSelected = this.sameEngineDedupGroups.map(() => true);
+        this.sameEngineDedupExpanded = this.sameEngineDedupGroups.map(() => false);
+        this.sameEngineDedupDescExpanded = {};
         this.sameEngineDedupOpen = true;
         if (this.sameEngineDedupGroups.length === 0) {
           this.showToast('No se encontraron reactivaciones.', 'info');
@@ -1012,6 +1018,8 @@ function app() {
         const data = await api('POST', `/users/${this.username}/sessions/${this.currentSession.id}/same-engine-dedup/apply`, { selected_groups: selected });
         this.sameEngineDedupGroups = [];
         this.sameEngineDedupSelected = [];
+        this.sameEngineDedupExpanded = [];
+        this.sameEngineDedupDescExpanded = {};
         this.sameEngineDedupOpen = false;
         this.showToast(`${data.merged_count} reactivaciones fusionadas.`, 'success');
         await this.selectSession(this.currentSession.id);
@@ -1022,7 +1030,17 @@ function app() {
     closeSameEngineDedupModal() {
       this.sameEngineDedupGroups = [];
       this.sameEngineDedupSelected = [];
+      this.sameEngineDedupExpanded = [];
+      this.sameEngineDedupDescExpanded = {};
       this.sameEngineDedupOpen = false;
+    },
+
+    toggleSameEngineDedupExpand(idx) {
+      this.sameEngineDedupExpanded[idx] = !this.sameEngineDedupExpanded[idx];
+    },
+
+    toggleDescExpand(key) {
+      this.sameEngineDedupDescExpanded[key] = !this.sameEngineDedupDescExpanded[key];
     },
 
     // ── Export / Import ──────────────────────────────────────────────────────
