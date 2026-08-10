@@ -217,6 +217,8 @@ class SameEngineDedupHouseInfo(BaseModel):
     covered_m2: Optional[float] = None
     review: Optional[str] = None
     url: str = ""
+    images: List[str] = []
+    description: str = ""
 
 
 class SameEngineDedupGroup(BaseModel):
