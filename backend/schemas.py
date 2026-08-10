@@ -143,6 +143,7 @@ class RunResponse(BaseModel):
     finished_at: Optional[str] = None
     errors: List[str] = []
     triggered_by: str = "manual"
+    same_engine_dedup: Optional[Dict[str, Any]] = None
 
 
 class RunCreatedResponse(BaseModel):
@@ -202,6 +203,47 @@ class DedupApplyRequest(BaseModel):
 class DedupApplyResponse(BaseModel):
     """Response for deduplicate/apply."""
     removed_count: int = 0
+
+
+class SameEngineDedupHouseInfo(BaseModel):
+    """A house within a same-engine dedup group."""
+    internal_id: str
+    search_engine: str
+    search_engine_id: str = ""
+    address: str = ""
+    price: Optional[float] = None
+    currency: str = "USD"
+    total_m2: Optional[float] = None
+    covered_m2: Optional[float] = None
+    review: Optional[str] = None
+    url: str = ""
+
+
+class SameEngineDedupGroup(BaseModel):
+    """A group of same-engine duplicate houses (old removed + new active)."""
+    old_id: str
+    new_id: str
+    engine: str
+    old_house: SameEngineDedupHouseInfo
+    new_house: SameEngineDedupHouseInfo
+
+
+class SameEngineDedupPreviewResponse(BaseModel):
+    """Response for same-engine-dedup/preview."""
+    groups: List[SameEngineDedupGroup] = []
+
+
+class SameEngineDedupApplyRequest(BaseModel):
+    """Request body for same-engine-dedup/apply."""
+    selected_groups: Optional[List[int]] = Field(
+        None,
+        description="Indices of groups to merge (default: all)",
+    )
+
+
+class SameEngineDedupApplyResponse(BaseModel):
+    """Response for same-engine-dedup/apply."""
+    merged_count: int = 0
 
 
 class ErrorResponse(BaseModel):

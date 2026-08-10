@@ -70,6 +70,10 @@ function app() {
     dedupGroups: [],
     dedupLoading: false,
     selectedDedupGroups: [],
+    sameEngineDedupGroups: [],
+    sameEngineDedupLoading: false,
+    sameEngineDedupSelected: [],
+    sameEngineDedupOpen: false,
 
     // ── Spread map state & methods ───────────────────────────────────────────
     ...mapMethods,
@@ -105,6 +109,10 @@ function app() {
 
     get dedupAllChecked() {
       return this.selectedDedupGroups.length > 0 && this.selectedDedupGroups.every(Boolean);
+    },
+
+    get sameEngineDedupAllChecked() {
+      return this.sameEngineDedupSelected.length > 0 && this.sameEngineDedupSelected.every(Boolean);
     },
 
     _norm(s) {
@@ -573,13 +581,27 @@ function app() {
         this.runStatus = await api('GET', `/runs/${this.runId}`);
         if (this.runStatus.status !== 'running') {
           this.stopPolling();
-          if (this.runStatus.status === 'done') await this.selectSession(this.currentSession.id);
+          if (this.runStatus.status === 'done') {
+            await this.selectSession(this.currentSession.id);
+            // Auto-show same-engine dedup modal if reactivations detected
+            const dedup = this.runStatus.same_engine_dedup;
+            if (dedup && dedup.count > 0) {
+              this.sameEngineDedupGroups = dedup.groups;
+              this.sameEngineDedupSelected = dedup.groups.map(() => true);
+              setTimeout(() => { this.sameEngineDedupOpen = true; }, 500);
+            }
+          }
         }
       } catch (e) { this.stopPolling(); }
     },
 
     // ── House actions ────────────────────────────────────────────────────────
     openDetail(h) { this.detailHouse = h; this.lightboxImg = null; this.notesSaved = false; },
+
+    openDetailById(houseId) {
+      const h = this.houses.find(h => h.internal_id === houseId);
+      if (h) this.openDetail(h);
+    },
 
     navigateDetail(dir) {
       if (!this.detailHouse || this.lightboxImg) return;
@@ -949,6 +971,58 @@ function app() {
     closeDedupModal() {
       this.dedupGroups = [];
       this.selectedDedupGroups = [];
+    },
+
+    // ── Same-engine dedup (reactivation detection) ─────────────────────────
+    async openSameEngineDedupModal() {
+      this.sameEngineDedupLoading = true;
+      try {
+        const data = await api('POST', `/users/${this.username}/sessions/${this.currentSession.id}/same-engine-dedup/preview`);
+        this.sameEngineDedupGroups = data.groups || [];
+        this.sameEngineDedupSelected = this.sameEngineDedupGroups.map(() => true);
+        this.sameEngineDedupOpen = true;
+        if (this.sameEngineDedupGroups.length === 0) {
+          this.showToast('No se encontraron reactivaciones.', 'info');
+          this.sameEngineDedupOpen = false;
+        }
+      } catch (e) { this.showToast('Error al buscar reactivaciones.', 'error'); }
+      finally { this.sameEngineDedupLoading = false; }
+    },
+
+    toggleAllSameEngineDedup() {
+      const v = !this.sameEngineDedupAllChecked;
+      this.sameEngineDedupSelected = this.sameEngineDedupSelected.map(() => v);
+    },
+
+    toggleSameEngineDedupGroup(idx) {
+      this.sameEngineDedupSelected[idx] = !this.sameEngineDedupSelected[idx];
+    },
+
+    async confirmSameEngineDedup() {
+      const selected = this.sameEngineDedupSelected.reduce((acc, checked, i) => {
+        if (checked) acc.push(i);
+        return acc;
+      }, []);
+      if (selected.length === 0) {
+        this.showToast('Seleccioná al menos un grupo para fusionar.', 'info');
+        return;
+      }
+      this.sameEngineDedupLoading = true;
+      try {
+        const data = await api('POST', `/users/${this.username}/sessions/${this.currentSession.id}/same-engine-dedup/apply`, { selected_groups: selected });
+        this.sameEngineDedupGroups = [];
+        this.sameEngineDedupSelected = [];
+        this.sameEngineDedupOpen = false;
+        this.showToast(`${data.merged_count} reactivaciones fusionadas.`, 'success');
+        await this.selectSession(this.currentSession.id);
+      } catch (e) { this.showToast('Error al fusionar reactivaciones.', 'error'); }
+      finally { this.sameEngineDedupLoading = false; }
+    },
+
+    closeSameEngineDedupModal() {
+      this.sameEngineDedupGroups = [];
+      this.sameEngineDedupSelected = [];
+      this.sameEngineDedupOpen = false;
     },
 
     // ── Export / Import ──────────────────────────────────────────────────────

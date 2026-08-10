@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from geocoding_tasks import run_geocode
 from scheduler import get_scheduler_status, setup_scheduler
 from deduplicator import apply_dedup, find_duplicates
+from same_engine_dedup import apply_same_engine_dedup, find_same_engine_duplicates
 from schemas import (
     CreateSessionRequest,
     DedupApplyRequest,
@@ -32,6 +33,9 @@ from schemas import (
     OkResponse,
     RunCreatedResponse,
     RunResponse,
+    SameEngineDedupApplyRequest,
+    SameEngineDedupApplyResponse,
+    SameEngineDedupPreviewResponse,
     SchedulerResponse,
     SearchSource,
     SessionResponse,
@@ -327,6 +331,45 @@ async def dedup_apply(username: str, session_id: str, body: DedupApplyRequest = 
         return {"removed_count": 0}
     removed = apply_dedup(session, username, groups)
     return {"removed_count": removed}
+
+
+# ── Same-engine dedup (reactivation detection) ───────────────────────────────
+
+@app.post(
+    "/api/users/{username}/sessions/{session_id}/same-engine-dedup/preview",
+    response_model=SameEngineDedupPreviewResponse,
+)
+async def same_engine_dedup_preview(username: str, session_id: str):
+    """Detecta propiedades reactivadas por el mismo portal (agente desactivó y volvió a publicar)."""
+    username = _validate_username(username)
+    db = read_db()
+    session = _session_or_404(db, username, session_id)
+    groups = find_same_engine_duplicates(session, username)
+    return {"groups": groups}
+
+
+@app.post(
+    "/api/users/{username}/sessions/{session_id}/same-engine-dedup/apply",
+    response_model=SameEngineDedupApplyResponse,
+)
+async def same_engine_dedup_apply(
+    username: str,
+    session_id: str,
+    body: SameEngineDedupApplyRequest = Body(default_factory=SameEngineDedupApplyRequest),
+):
+    """Fusiona propiedades reactivadas: conserva la original y transfiere datos de la nueva."""
+    username = _validate_username(username)
+    db = read_db()
+    session = _session_or_404(db, username, session_id)
+    all_groups = find_same_engine_duplicates(session, username)
+    if body.selected_groups is not None:
+        groups = [all_groups[i] for i in body.selected_groups if 0 <= i < len(all_groups)]
+    else:
+        groups = all_groups
+    if not groups:
+        return {"merged_count": 0}
+    merged = apply_same_engine_dedup(session, username, groups)
+    return {"merged_count": merged}
 
 
 # ── DB export ────────────────────────────────────────────────────────────────

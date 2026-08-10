@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from storage import _now, read_db
 from .factory import get_scraper
 from .persistence import persist_listings
+from same_engine_dedup import find_same_engine_duplicates
 
 
 def make_run(
@@ -131,6 +132,19 @@ async def run_scrape(
         )
 
         persist_listings(all_listings, session, username)
+
+        # Detect same-engine duplicates (reactivations) after persistence
+        try:
+            dup_groups = find_same_engine_duplicates(
+                session, username, run_started_at=runs[run_id]["started_at"]
+            )
+            if dup_groups:
+                runs[run_id]["same_engine_dedup"] = {
+                    "groups": dup_groups,
+                    "count": len(dup_groups),
+                }
+        except Exception as e:
+            logger.error("Same-engine dedup detection failed: %s", e)
 
         if should_cancel():
             mark_cancelled(runs, run_id)
