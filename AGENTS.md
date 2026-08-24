@@ -50,8 +50,18 @@ mudate/
 │   ├── scheduler.py       — daily 08:00 ART auto-refresh
 │   ├── config.py          — Settings dataclass (env-driven)
 │   ├── schemas.py         — HouseDict, request/response Pydantic models
+│   ├── deduplicator.py    — cross-engine fuzzy deduplication
+│   ├── same_engine_dedup.py — same-engine reactivation detection
 │   ├── requirements.txt   — fastapi, uvicorn, playwright, apscheduler, etc.
-│   ├── scrapers/          — scraper package (see above)
+│   ├── scrapers/
+│   │   ├── base.py        — BaseScraper ABC + shared utils
+│   │   ├── factory.py     — engine → scraper class
+│   │   ├── runner.py      — run_scrape() lifecycle + make_run()
+│   │   ├── persistence.py — merge listings into db.json
+│   │   ├── zonaprop.py    — Zonaprop scraper
+│   │   ├── argenprop.py   — Argenprop scraper
+│   │   ├── mercadolibre.py — MercadoLibre scraper
+│   │   └── remax.py       — Remax scraper
 │   └── tests/             — standalone diagnostic test scripts
 ├── frontend/
 │   ├── index.html         — SPA (Alpine.js + Tailwind + Leaflet)
@@ -76,9 +86,11 @@ mudate/
 | **Cloudflare bypass** | Persistent browser profiles; separate profiles for headless vs headed runs |
 | **Price history** | Every price change recorded per property; % change shown in table |
 | **Geocoding** | Nominatim (pipelined rate limiter) → OpenCage fallback; manual address override |
-| **Interactive map** | Leaflet + OSM; color-coded pins by review status; fly-to on click |
-| **Review system** | A revisar / En duda / Interesante / Descartada / Contactar |
+| **Interactive map** | Leaflet + OSM; color-coded pins by review status; fly-to on click; canvas rendering |
+| **Review system** | A revisar / En duda / Interesante / Descartada / Contactar / Duplicado |
 | **Filter & sort** | By review, type, status, price range, address, real estate, notes, provider, price changes |
+| **Cross-engine dedup** | Fuzzy address matching (Jaccard ≥ 0.75) with price/m² tolerance |
+| **Same-engine dedup** | Reactivation detection: merges re-listed properties from the same portal |
 | **Bulk actions** | Multi-select with batch review + compare (2-5 properties side by side) |
 | **Export CSV** | Respects active filters; includes BOM for Excel |
 | **Export/Import DB** | Full db.json backup & restore via admin UI |
@@ -106,6 +118,10 @@ Deduplication: houses with same `search_engine_id` or URL across sessions are me
 | POST | `/api/users/{username}/sessions/{id}/run` | Launch scrape (background) |
 | POST | `/api/users/{username}/sessions/{id}/geocode` | Launch geocoding (background) |
 | DELETE | `/api/users/{username}/sessions/{id}/geodata` | Clear geo coordinates |
+| POST | `/api/users/{username}/sessions/{id}/deduplicate/preview` | Preview cross-engine duplicates |
+| POST | `/api/users/{username}/sessions/{id}/deduplicate/apply` | Apply cross-engine dedup |
+| POST | `/api/users/{username}/sessions/{id}/same-engine-dedup/preview` | Preview reactivation duplicates |
+| POST | `/api/users/{username}/sessions/{id}/same-engine-dedup/apply` | Apply reactivation dedup (merge) |
 | GET/PATCH | `/api/houses/{id}` | Get/update review, notes, manual_address |
 | POST | `/api/houses/{id}/geocode` | Geocode single house |
 | GET/DELETE | `/api/runs/{id}` | Poll/cancel run |
@@ -153,7 +169,7 @@ Deduplication: houses with same `search_engine_id` or URL across sessions are me
 |---|---|
 | `frontend/constants.js:2-8` | `REVIEW_OPTIONS` — dropdown options for review status |
 | `frontend/constants.js:54-66` | `api()` — fetch wrapper used by all frontend requests |
-| `frontend/app.js:1-987` | `app()` — main Alpine component with all state & methods |
+| `frontend/app.js:1-1224` | `app()` — main Alpine component with all state & methods |
 | `frontend/app.js:74-76` | `isRunning` — computed property for run status |
 | `frontend/app.js:106-144` | `filteredHouses` — computed getter applying all filters + sort |
 | `frontend/app.js:345-353` | `setView()` — switches between table/map view |
@@ -161,6 +177,6 @@ Deduplication: houses with same `search_engine_id` or URL across sessions are me
 | `frontend/app.js:417-445` | `selectSession()` — loads session data from API |
 | `frontend/app.js:481-516` | `triggerRun()` / `startPolling()` / `pollRun()` — scrape lifecycle |
 | `frontend/app.js:841-867` | `exportCsv()` — CSV export with BOM |
-| `frontend/map.js:4-173` | `mapMethods` — Leaflet map, pins, geocoding poll |
-| `frontend/map.js:19-36` | `initMap()` — initializes Leaflet map |
+| `frontend/map.js:1-292` | `mapMethods` — Leaflet map, pins, geocoding poll |
+| `frontend/map.js:27-36` | `initMap()` — initializes Leaflet map |
 | `frontend/map.js:38-85` | `renderPins()` — color-coded circle markers by review status |
