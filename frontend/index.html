@@ -1257,23 +1257,21 @@
             </template>
           </div>
           <div class="flex items-center gap-2">
-            <select x-model="newSourceEngine" class="text-xs border border-slate-300 rounded-lg px-2 py-2">
-              <option value="argenprop">Argenprop</option>
-              <option value="mercadolibre">MercadoLibre</option>
-              <option value="zonaprop">Zonaprop</option>
-              <option value="remax">Remax</option>
-            </select>
-            <input x-model="newFilter" type="text" placeholder="/path o URL completa…"
+            <input x-model="newFilter" type="text" placeholder="Pegá la URL completa…"
               @input="parseFilterUrl()"
               @keydown.enter="addNewSource()"
               class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            <button @click="addNewSource()" :disabled="!newFilter"
+            <span x-show="newSourceEngine"
+              :class="{'bg-purple-100 text-purple-700': newSourceEngine === 'zonaprop', 'bg-orange-100 text-orange-700': newSourceEngine === 'argenprop', 'bg-yellow-100 text-yellow-700': newSourceEngine === 'mercadolibre', 'bg-blue-100 text-blue-700': newSourceEngine === 'remax'}"
+              class="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
+              x-text="ENGINE_LABELS[newSourceEngine]"></span>
+            <button @click="addNewSource()" :disabled="!newFilter || !newSourceEngine"
               class="text-xs bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-semibold px-3 py-2 rounded-lg transition shrink-0 whitespace-nowrap">
               + Agregar
             </button>
           </div>
           <p class="text-xs text-slate-400 mt-1.5">
-            Si pegás una URL completa, el motor se detecta automáticamente.
+            Pegá la URL completa para detectar el motor automáticamente.
           </p>
         </div>
       </div>
@@ -1294,22 +1292,21 @@
         <div>
           <label class="text-sm font-medium text-slate-600 block mb-1">Nueva URL</label>
           <div class="flex items-center gap-2">
-            <select x-model="_editSourceEngine" class="text-xs border border-slate-300 rounded-lg px-2 py-2">
-              <option value="argenprop">Argenprop</option>
-              <option value="mercadolibre">MercadoLibre</option>
-              <option value="zonaprop">Zonaprop</option>
-              <option value="remax">Remax</option>
-            </select>
-            <input x-model="_editSourceFilter" type="text" placeholder="/path o URL completa…"
+            <input x-model="_editSourceFilter" type="text" placeholder="Pegá la URL completa…"
+              @input="parseEditFilterUrl()"
               @keydown.enter="addEditSource()"
               class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            <button @click="addEditSource()" :disabled="!_editSourceFilter"
+            <span x-show="_editSourceEngine"
+              :class="{'bg-purple-100 text-purple-700': _editSourceEngine === 'zonaprop', 'bg-orange-100 text-orange-700': _editSourceEngine === 'argenprop', 'bg-yellow-100 text-yellow-700': _editSourceEngine === 'mercadolibre', 'bg-blue-100 text-blue-700': _editSourceEngine === 'remax'}"
+              class="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
+              x-text="ENGINE_LABELS[_editSourceEngine]"></span>
+            <button @click="addEditSource()" :disabled="!_editSourceFilter || !_editSourceEngine"
               class="text-xs bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-semibold px-3 py-2 rounded-lg transition shrink-0 whitespace-nowrap">
               + Agregar
             </button>
           </div>
           <p class="text-xs text-slate-400 mt-1.5">
-            Si pegás una URL completa, el motor se detecta automáticamente.
+            Pegá la URL completa para detectar el motor automáticamente.
           </p>
         </div>
       </div>

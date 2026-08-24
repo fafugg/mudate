@@ -12,7 +12,7 @@ function app() {
     newFilter: '',
     newLabel: '',
     newSources: [],
-    newSourceEngine: 'argenprop',
+    newSourceEngine: '',
 
     runId: null,
     runSessionId: null,
@@ -34,7 +34,7 @@ function app() {
     mobileInfoOpen: true,
     switchingView: false,
     _editSources: [],
-    _editSourceEngine: 'argenprop',
+    _editSourceEngine: '',
     _editSourceFilter: '',
     sortBy: 'search_engine_id',
     sortDir: 'asc',
@@ -281,14 +281,15 @@ function app() {
     },
 
     previewUrl() {
-      if (!this.newFilter) return '—';
+      if (!this.newFilter || !this.newSourceEngine) return '—';
       const bases = {
         zonaprop: 'https://www.zonaprop.com.ar',
         argenprop: 'https://www.argenprop.com',
         mercadolibre: 'https://inmuebles.mercadolibre.com.ar',
         remax: 'https://www.remax.com.ar/listings/buy',
       };
-      const base = bases[this.newSourceEngine] || bases.zonaprop;
+      const base = bases[this.newSourceEngine];
+      if (!base) return '—';
       const sep = this.newFilter.startsWith('/') || this.newFilter.startsWith('?') ? '' : '/';
       return base + sep + this.newFilter;
     },
@@ -315,6 +316,32 @@ function app() {
           this.newSourceEngine = 'remax';
           const match = u.pathname.match(/\/listings\/buy(.*)/);
           this.newFilter = (match ? match[1] : u.pathname) + u.search + u.hash;
+        }
+      } catch (e) { /* not a valid URL, ignore */ }
+    },
+
+    parseEditFilterUrl() {
+      const val = this._editSourceFilter.trim();
+      if (!val.startsWith('http')) {
+        this._editSourceEngine = '';
+        return;
+      }
+      try {
+        const u = new URL(val);
+        const host = u.hostname.toLowerCase();
+        if (host.includes('zonaprop.com.ar')) {
+          this._editSourceEngine = 'zonaprop';
+          this._editSourceFilter = u.pathname + u.search;
+        } else if (host.includes('argenprop.com')) {
+          this._editSourceEngine = 'argenprop';
+          this._editSourceFilter = u.pathname + u.search;
+        } else if (host.includes('mercadolibre.com.ar') || host.includes('inmuebles.mercadolibre')) {
+          this._editSourceEngine = 'mercadolibre';
+          this._editSourceFilter = u.pathname + u.search;
+        } else if (host.includes('remax.com.ar')) {
+          this._editSourceEngine = 'remax';
+          const match = u.pathname.match(/\/listings\/buy(.*)/);
+          this._editSourceFilter = (match ? match[1] : u.pathname) + u.search + u.hash;
         }
       } catch (e) { /* not a valid URL, ignore */ }
     },
@@ -779,28 +806,32 @@ function app() {
       this.newFilter = '';
       this.newLabel = '';
       this.newSources = [];
-      this.newSourceEngine = 'argenprop';
+      this.newSourceEngine = '';
       this._editSourceFilter = '';
+      this._editSourceEngine = '';
     },
 
     addNewSource() {
-      if (!this.newFilter) return;
+      if (!this.newFilter || !this.newSourceEngine) return;
       const filter = this.newFilter.startsWith('/') ? this.newFilter : '/' + this.newFilter;
       this.newSources.push({ engine: this.newSourceEngine, filter });
       this.newFilter = '';
+      this.newSourceEngine = '';
     },
 
     openSourceEditor() {
       this._editSources = (this.currentSession?.search_sources || []).map(s => ({ ...s }));
       this._editSourceFilter = '';
+      this._editSourceEngine = '';
       this.modalType = 'sourceEditor';
     },
 
     addEditSource() {
-      if (!this._editSourceFilter) return;
+      if (!this._editSourceFilter || !this._editSourceEngine) return;
       const filter = this._editSourceFilter.startsWith('/') ? this._editSourceFilter : '/' + this._editSourceFilter;
       this._editSources.push({ engine: this._editSourceEngine, filter });
       this._editSourceFilter = '';
+      this._editSourceEngine = '';
     },
 
     removeEditSource(idx) {
