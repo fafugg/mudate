@@ -1,18 +1,22 @@
 # 🏠 Mudate - home search
 
-Track and compare real estate listings from **Zonaprop** and **Argenprop**.  
+Track and compare real estate listings from **Zonaprop**, **Argenprop**, **MercadoLibre**, and **Remax**.  
 Filter, review, map, and export properties — all from a single self-hosted web app.
 
 ---
 
 ## Features
 
-- **Scrapes** Zonaprop and Argenprop using Playwright (stealth mode — handles JS-heavy pages)
+- **Multi-engine scraping** — Zonaprop, Argenprop, MercadoLibre, and Remax via Playwright (stealth mode)
 - **Tracks price history** — every price change is recorded per property
 - **Geocodes addresses** and shows pins on an interactive map (Leaflet + Nominatim)
-- **Filter & sort** by status, type, review, price, m², and more
-- **Review system** — mark properties as Interesting, Contact, Discard, or Unsure
+- **Filter & sort** by review, type, status, price, m², provider, and more
+- **Review system** — mark properties as Interesting, Contact, Discard, Unsure, or Duplicate
+- **Deduplication** — fuzzy address matching removes cross-engine duplicates; same-engine reactivation detection merges re-listed properties
+- **Bulk actions** — multi-select with batch review and side-by-side comparison
 - **Export to CSV** — respects active filters
+- **Export/Import DB** — full database backup and restore via the admin UI
+- **Dark mode** — toggleable theme with localStorage persistence
 - **Daily auto-refresh** — a scheduler re-scrapes all sessions every morning at 08:00 (Argentina time)
 - **No build step** — frontend is plain HTML/JS (Alpine.js + Tailwind CDN)
 - **Single-file database** — everything stored in `db.json`
@@ -167,7 +171,7 @@ OPENCAGE_API_KEY=your_key_here uvicorn main:app --host 0.0.0.0 --port 8000
 ## How to Use
 
 1. **Enter a username** — no password, just a name to separate your data from others on the same instance.
-2. **Create a search** — paste a filter URL from Zonaprop or Argenprop (the path after the domain, e.g. `/inmuebles-venta-palermo-capital-federal-argentina.html`).
+2. **Create a search** — paste a filter URL from Zonaprop, Argenprop, MercadoLibre, or Remax (the path after the domain, e.g. `/inmuebles-venta-palermo-capital-federal-argentina.html`).
 3. **Click Actualizar** — the scraper runs in the background and populates the table.
 4. **Review listings** — use the filter bar, open property details, add notes, mark reviews.
 5. **Open the map** — addresses are geocoded automatically when you switch to map view.
@@ -181,15 +185,38 @@ OPENCAGE_API_KEY=your_key_here uvicorn main:app --host 0.0.0.0 --port 8000
 mudate/
 ├── backend/
 │   ├── main.py            # FastAPI app + API routes
-│   ├── scrapers/          # Zonaprop and Argenprop scrapers (Playwright)
-│   ├── geocoder.py        # Address geocoding (Nominatim → Photon → OpenCage)
-│   ├── scheduler.py       # Daily auto-refresh (APScheduler)
+│   ├── config.py          # Centralized settings (env vars & constants)
+│   ├── schemas.py         # Pydantic request/response models
 │   ├── storage.py         # Atomic JSON read/write
+│   ├── deduplicator.py    # Cross-engine fuzzy deduplication
+│   ├── same_engine_dedup.py # Same-engine reactivation detection
+│   ├── geocoder.py        # Address geocoding (Nominatim → OpenCage)
+│   ├── geocoding_tasks.py # Concurrent batch geocoding
+│   ├── scheduler.py       # Daily auto-refresh (APScheduler)
+│   ├── scrapers/
+│   │   ├── base.py        # BaseScraper ABC + shared utils
+│   │   ├── factory.py     # Engine → scraper class mapping
+│   │   ├── runner.py      # Scrape run orchestration
+│   │   ├── persistence.py # Merge listings into db.json
+│   │   ├── zonaprop.py    # Zonaprop scraper
+│   │   ├── argenprop.py   # Argenprop scraper
+│   │   ├── mercadolibre.py # MercadoLibre scraper
+│   │   └── remax.py       # Remax scraper
+│   ├── tests/             # Standalone diagnostic test scripts
 │   └── requirements.txt
 ├── frontend/
-│   └── index.html         # Single-page app (Alpine.js + Tailwind + Leaflet)
+│   ├── index.html         # SPA shell (Alpine.js + Tailwind + Leaflet)
+│   ├── app.js             # Alpine component (state, methods, filters)
+│   ├── map.js             # Leaflet map & geocoding methods
+│   ├── constants.js       # Review options, pin colors, api() helper
+│   └── dark.css           # Dark mode overrides
+├── scripts/
+│   └── reimage_argenprop.py # One-off script to re-scrape Argenprop images
 ├── Dockerfile
 ├── docker-compose.yml
+├── README.md
+├── DOCS.md
+├── AGENTS.md              # Project context for AI sessions
 └── data/                  # Created automatically — holds db.json (git-ignored)
 ```
 
@@ -207,7 +234,7 @@ docker compose up --build   # rebuilds the image with the latest code
 ## Notes & Limitations
 
 - **Single-user friendly** — the JSON database works well for personal use or a small group. It is not designed for many concurrent users writing at the same time.
-- **Scraper fragility** — if Zonaprop or Argenprop update their HTML structure, selectors in `scrapers/zonaprop.py` and `scrapers/argenprop.py` may need to be updated.
+- **Scraper fragility** — if Zonaprop, Argenprop, MercadoLibre, or Remax update their HTML structure, selectors in the corresponding scraper files may need to be updated.
 - **Geocoding rate limit** — Nominatim enforces 1 request/second. Geocoding a large session takes time. Adding an `OPENCAGE_API_KEY` improves hit rate but the rate limit stays.
 - **Argentina only** — geocoding is scoped to Argentina. Adapting to other countries requires changes in `geocoder.py`.
 
@@ -220,7 +247,7 @@ docker compose up --build   # rebuilds the image with the latest code
 | Backend | Python 3.11, FastAPI, Uvicorn |
 | Scraping | Playwright, playwright-stealth, BeautifulSoup4 |
 | Scheduling | APScheduler |
-| Geocoding | Nominatim, Photon, OpenCage (optional) |
+| Geocoding | Nominatim, OpenCage (optional) |
 | Frontend | Alpine.js, Tailwind CSS (CDN), Leaflet.js |
 | Database | JSON flat file with file locking |
 

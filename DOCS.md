@@ -28,6 +28,8 @@ Mudate solves the entire lifecycle:
 
 Mudate is designed to be self-hosted: you control your data, and nothing is sent to any third-party analytics service.
 
+It supports four Argentine real estate portals: **Zonaprop**, **Argenprop**, **MercadoLibre**, and **Remax**. Each session can combine multiple search engines, and properties found across different engines are automatically deduplicated.
+
 ---
 
 ## Getting Started
@@ -111,7 +113,7 @@ Enter any username on the login screen. No password is required — usernames ex
 
 ### 2. Create a search
 
-Click **Nueva búsqueda** and paste the path portion of a Zonaprop or Argenprop search URL — the part after the domain. For example:
+Click **Nueva búsqueda** and paste the path portion of a Zonaprop, Argenprop, MercadoLibre, or Remax search URL — the part after the domain. For example:
 
 ```
 /inmuebles-venta-palermo-capital-federal-argentina.html
@@ -176,7 +178,19 @@ The scheduler re-scrapes every session for every user every morning at **08:00 A
 
 - **URL:** `https://www.argenprop.com`
 - **Method:** Playwright (Chromium, stealth mode).
-- **Scraping strategy:** Similar to Zonaprop — search pages are paginated, detail pages are loaded for new listings only.
+- **Scraping strategy:** Similar to Zonaprop — search pages are paginated, detail pages are loaded for new listings only. DOM-based extraction pulls property specs, images, and agent info.
+
+### MercadoLibre
+
+- **URL:** `https://inmuebles.mercadolibre.com.ar`
+- **Method:** Playwright (Chromium, stealth mode).
+- **Scraping strategy:** Click-based pagination through search results. Listing cards are parsed from the DOM. Detail pages are loaded for new listings to extract full specs, images, and agent contact info.
+
+### Remax
+
+- **URL:** `https://www.remax.com.ar`
+- **Method:** Direct HTTP requests to the Remax API (`api-ar.redremax.com`), supplemented by Playwright for listing details.
+- **Scraping strategy:** Uses the internal Remax API for search results (no Cloudflare issues). Detail pages are scraped via Playwright for full property data.
 
 ### Nominatim (OpenStreetMap)
 
@@ -214,12 +228,18 @@ The scheduler re-scrapes every session for every user every morning at **08:00 A
 │  ┌──────▼────────────────────▼───────────┐  │
 │  │            scrapers/                  │  │
 │  │  zonaprop.py    argenprop.py          │  │
-│  │            (Playwright)               │  │
+│  │  mercadolibre.py  remax.py           │  │
+│  │       base.py / factory.py            │  │
 │  └───────────────────────────────────────┘  │
 │                                              │
 │  ┌───────────────────────────────────────┐  │
 │  │            geocoder.py               │  │
 │  │  Nominatim (cascade) → OpenCage      │  │
+│  └───────────────────────────────────────┘  │
+│                                              │
+│  ┌───────────────────────────────────────┐  │
+│  │  deduplicator.py  same_engine_dedup  │  │
+│  │  cross-engine & reactivation dedup   │  │
 │  └───────────────────────────────────────┘  │
 │                                              │
 │  ┌───────────────────────────────────────┐  │
@@ -237,7 +257,7 @@ The scheduler re-scrapes every session for every user every morning at **08:00 A
 
 **Single-file JSON database.** All data lives in one `db.json` file. This keeps deployment trivial (no database server to manage) and makes backup/restore a single file copy. Writes are protected by a file lock (`filelock`) and use a write-to-temp-then-`os.replace` pattern so a crash mid-write never corrupts the file.
 
-**No build step.** The frontend is a single `index.html` file using Alpine.js and Tailwind via CDN. No npm, no bundler, no compilation. FastAPI serves it as a static file.
+**No build step.** The frontend is served as static files (Alpine.js + Tailwind via CDN). No npm, no bundler, no compilation. FastAPI serves it as a static file mount.
 
 **In-memory run state.** Scrape and geocode job progress is stored in a Python dict (`runs`) in the FastAPI process memory, not in the database. The frontend polls `/api/runs/{run_id}` every second to update the progress bar. This state is lost on server restart, but jobs that were running will simply stop and their results (up to the point of cancellation) will already be persisted.
 
@@ -252,26 +272,49 @@ mudate/
 │
 ├── backend/
 │   ├── main.py              # FastAPI app: all API routes + background task launchers
+│   ├── config.py            # Centralized settings (env vars & constants)
+│   ├── schemas.py           # Pydantic request/response models
 │   ├── storage.py           # Atomic JSON read/write with filelock
+│   ├── deduplicator.py      # Cross-engine fuzzy deduplication
+│   ├── same_engine_dedup.py # Same-engine reactivation detection
 │   ├── geocoder.py          # Address → lat/lng (Nominatim cascade + OpenCage fallback)
+│   ├── geocoding_tasks.py   # Concurrent batch geocoding with Semaphore
 │   ├── scheduler.py         # APScheduler: daily 08:00 ART refresh of all sessions
 │   ├── requirements.txt     # Python dependencies
 │   │
 │   ├── scrapers/
-│   │   ├── __init__.py      # run_scrape() orchestrator + _persist_listings()
-│   │   ├── base.py          # BaseScraper ABC with shared helpers
+│   │   ├── __init__.py      # Re-exports: run_scrape, make_run, get_scraper
+│   │   ├── base.py          # BaseScraper ABC + shared utils (coerce, parse_price)
+│   │   ├── factory.py       # Engine name → scraper class mapping
+│   │   ├── runner.py        # run_scrape() orchestration + make_run()
+│   │   ├── persistence.py   # Merge listings into db.json (dedup + price history)
 │   │   ├── zonaprop.py      # Zonaprop scraper (Playwright, stealth)
-│   │   └── argenprop.py     # Argenprop scraper (Playwright, stealth)
+│   │   ├── argenprop.py     # Argenprop scraper (Playwright, stealth)
+│   │   ├── mercadolibre.py  # MercadoLibre scraper (Playwright, click pagination)
+│   │   └── remax.py         # Remax scraper (API + Playwright detail)
 │   │
 │   └── tests/
-│       ├── test_cloudflare.py   # Diagnose Cloudflare blocks / profile poisoning
-│       ├── test_detail.py       # Smoke-test the detail page extractor
-│       ├── test_images.py       # Debug image extraction failures
-│       ├── test_pagination.py   # Validate click-based pagination
-│       └── test_suggested.py    # Inspect suggested listings behaviour
+│       ├── test_cloudflare.py       # Diagnose Cloudflare blocks / profile poisoning
+│       ├── test_detail.py           # Smoke-test Zonaprop detail page extractor
+│       ├── test_images.py           # Debug Zonaprop image extraction failures
+│       ├── test_pagination.py       # Validate Zonaprop click-based pagination
+│       ├── test_suggested.py        # Inspect Zonaprop suggested listings behaviour
+│       ├── test_argenprop.py        # Diagnostic tests for Argenprop scraper
+│       ├── test_argenprop_pagination.py # Argenprop pagination validation
+│       ├── test_mercadolibre.py     # Diagnostic tests for MercadoLibre scraper
+│       ├── test_remax.py            # Diagnostic tests for Remax scraper
+│       ├── test_persistence.py      # Multi-engine persistence behavior
+│       └── test_pagination_all.py   # Pagination verification for all engines
 │
 ├── frontend/
-│   └── index.html           # Single-page app (Alpine.js + Tailwind CDN + Leaflet)
+│   ├── index.html           # SPA shell (Alpine.js + Tailwind CDN + Leaflet)
+│   ├── app.js               # Alpine component (state, methods, filters)
+│   ├── map.js               # Leaflet map & geocoding methods
+│   ├── constants.js         # Review options, pin colors, api() helper
+│   └── dark.css             # Dark mode overrides
+│
+├── scripts/
+│   └── reimage_argenprop.py # One-off script to re-scrape Argenprop images
 │
 ├── data/                    # Created automatically — holds db.json (git-ignored)
 │   └── db.json
@@ -279,7 +322,8 @@ mudate/
 ├── Dockerfile
 ├── docker-compose.yml
 ├── README.md
-└── DOCS.md                  # This file
+├── DOCS.md
+└── AGENTS.md                # Project context for AI sessions
 ```
 
 ---
@@ -296,6 +340,21 @@ The only way to write to the database. Acquires the file lock, reads the current
 
 ---
 
+### Backend — `config.py`
+
+#### `settings` (Settings dataclass)
+Centralized configuration singleton. All environment variables and magic constants live here:
+- `db_path` — path to `db.json` (env: `DB_PATH`, default: `../db.json`)
+- `opencage_api_key` — OpenCage API key (env: `OPENCAGE_API_KEY`)
+- `geocode_batch_size` — max concurrent geocoding tasks (default: 10)
+- `nominatim_interval` — seconds between Nominatim sends (default: 1.1)
+- `scheduler_hour` / `scheduler_minute` — daily auto-refresh time (default: 08:00 ART)
+- `valid_engines` — tuple of supported engine names: `("zonaprop", "argenprop", "mercadolibre", "remax")`
+- `max_upload_mb` — max import file size (default: 50)
+- `run_prune_hours` — max age for finished runs in memory (default: 24)
+
+---
+
 ### Backend — `geocoder.py`
 
 #### `geocode(address: str) → Tuple[Optional[float], Optional[float]]`
@@ -309,19 +368,53 @@ Generates up to three progressively simpler versions of an address: full cleaned
 
 ---
 
-### Backend — `scrapers/__init__.py`
+### Backend — `scrapers/runner.py`
 
 #### `run_scrape(session, username, run_id, runs) → None`
-Top-level background task for a scrape run. Instantiates the correct scraper, calls `scrape_search()`, and on completion calls `_persist_listings()`. Updates `runs[run_id]` with progress, status, and errors throughout.
+Top-level background task for a scrape run. Supports multiple search sources — runs each engine's scraper sequentially (to avoid Playwright resource conflicts). Updates `runs[run_id]` with progress, status, and errors throughout. On completion, calls `persist_listings()` and then detects same-engine reactivation duplicates.
 
-#### `_persist_listings(listings, session, username) → None`
+#### `make_run(run_id, ...) → dict`
+Creates a new run status dict with id, status, progress, timestamps, and error list.
+
+#### `mark_cancelled(runs, run_id) → None`
+Marks a run as cancelled by setting status, message, and finished_at.
+
+### Backend — `scrapers/persistence.py`
+
+#### `persist_listings(listings, session, username) → None`
 Merges a list of scraped listing dicts into the database in a single `atomic_update`. For each listing:
 - If a house with the same `search_engine_id` or URL already exists in **any** of the user's sessions, it is updated in-place (price history is appended if the price changed).
 - If it's new, a fresh house record is created.
 - Houses that were in the session previously but absent from the current scrape are marked as `status: "removed"`.
+- **Partial scrape safeguard:** If the scraper returned far fewer listings than the session previously had (likely Cloudflare block), removal is skipped to prevent mass data loss.
 
 #### `_merge(house, listing, now) → None`
 Updates a house record's mutable fields (price, images, specs, etc.) from a fresh listing dict without touching user-set fields (review, notes, manual_address, lat, lng).
+
+### Backend — `scrapers/factory.py`
+
+#### `get_scraper(engine: str) → BaseScraper`
+Returns the correct scraper instance for the given engine name (`"zonaprop"`, `"argenprop"`, `"mercadolibre"`, or `"remax"`). Raises `ValueError` for unknown engines.
+
+---
+
+### Backend — `deduplicator.py`
+
+#### `find_duplicates(session, username) → List[dict]`
+Finds groups of properties across different search engines that are likely the same listing, using fuzzy address matching (Jaccard similarity ≥ 0.75), price tolerance (±10%), and square-meter tolerance (±10%). Returns groups of duplicate houses, each with a designated `keep_id` (the property from the highest-priority engine).
+
+#### `apply_dedup(session, username, groups) → int`
+Marks duplicate houses as `review: "duplicado"` and merges their metadata (notes, review status) into the kept house. Returns the number of houses marked as duplicates.
+
+---
+
+### Backend — `same_engine_dedup.py`
+
+#### `find_same_engine_duplicates(session, username, run_started_at=None) → List[dict]`
+Detects reactivation duplicates: cases where a real estate agent deactivated a listing and re-created it as "new" to bump it to the top. Finds pairs of houses from the **same** search engine where one was removed and one was newly added, matching on address similarity, price tolerance, and square-meter tolerance. When `run_started_at` is provided, only considers houses changed during that specific scrape run.
+
+#### `apply_same_engine_dedup(session, username, groups) → int`
+Merges selected same-engine duplicate groups. For each group: updates the old house with the new house's mutable fields, records price changes in `previous_prices`, transfers the `search_engine_id`, and deletes the new house from the database. Returns the number of houses merged.
 
 ---
 
@@ -342,12 +435,26 @@ Updates user-set fields on a house: `review`, `notes`, and/or `manual_address`. 
 #### `POST /api/users/{username}/sessions/{session_id}/geocode`
 Launches geocoding for all un-geocoded houses in a session as a background task. Accepts a `force=true` query parameter to retry previously failed addresses.
 
+#### `POST /api/users/{username}/sessions/{session_id}/deduplicate/preview`
+Finds groups of cross-engine duplicates in the session using fuzzy address matching. Returns the groups without modifying anything.
+
+#### `POST /api/users/{username}/sessions/{session_id}/deduplicate/apply`
+Marks cross-engine duplicates as `review: "duplicado"` and merges their metadata into the kept house. Optionally accepts `selected_groups` (list of group indices) to only deduplicate specific groups.
+
+#### `POST /api/users/{username}/sessions/{session_id}/same-engine-dedup/preview`
+Detects same-engine reactivation duplicates (agent deactivated + re-listed). Returns pairs without modifying anything.
+
+#### `POST /api/users/{username}/sessions/{session_id}/same-engine-dedup/apply`
+Merges same-engine reactivation duplicates: keeps the original house, transfers data from the re-listed house, and deletes the duplicate. Optionally accepts `selected_groups`.
+
 #### `_run_geocode(house_ids, run_id, runs) → None`
 Geocodes a list of house IDs concurrently (up to 10 at a time via `asyncio.Semaphore`). Each task calls `geocoder.geocode()` and saves the result with `atomic_update`. The Nominatim rate limiter inside the geocoder ensures the 1 req/s policy is respected globally across all concurrent tasks.
 
 ---
 
-### Frontend — `index.html` (Alpine.js)
+### Frontend — `app.js` (Alpine.js)
+
+Main Alpine component. Source is split across `app.js` (core logic), `map.js` (Leaflet methods), and `constants.js` (review options, pin colors, `api()` helper). These are merged at runtime into a single Alpine component.
 
 #### `selectSession(sessionId)`
 Loads a session from the API, sets `this.houses`, resets all filter state and pagination, and switches the screen to `'session'`. Called when opening a session from the list or after creating a new one.
@@ -481,12 +588,84 @@ python tests/test_suggested.py
 
 ---
 
+### `test_argenprop.py` — Diagnostic tests for Argenprop
+
+Runs a suite of diagnostic tests against the Argenprop scraper, covering listing extraction, detail page parsing, and pagination.
+
+**Run:**
+```bash
+python tests/test_argenprop.py
+```
+
+---
+
+### `test_argenprop_pagination.py` — Argenprop pagination validation
+
+Validates that the Argenprop scraper correctly paginates through search results, testing URL format, page navigation, and listing extraction across multiple pages.
+
+**Run:**
+```bash
+python tests/test_argenprop_pagination.py
+```
+
+---
+
+### `test_mercadolibre.py` — Diagnostic tests for MercadoLibre
+
+Runs diagnostic tests against the MercadoLibre scraper, covering click-based pagination, listing card parsing, and detail page extraction.
+
+**Run:**
+```bash
+python tests/test_mercadolibre.py
+```
+
+---
+
+### `test_remax.py` — Diagnostic tests for Remax
+
+Runs diagnostic tests against the Remax scraper, covering API-based search, image URL construction, listing detail extraction, and URL format handling.
+
+**Run:**
+```bash
+python tests/test_remax.py
+```
+
+---
+
+### `test_persistence.py` — Multi-engine persistence behavior
+
+Tests the persistence layer's behavior when scraping multiple engines in the same session: deduplication across engines, price history tracking, and the "removed" marking logic.
+
+**Run:**
+```bash
+python tests/test_persistence.py
+```
+
+---
+
+### `test_pagination_all.py` — Pagination verification for all engines
+
+Runs pagination tests across all four scrapers (Zonaprop, Argenprop, MercadoLibre, Remax) to verify that each engine correctly navigates through multiple pages of results.
+
+**Run:**
+```bash
+python tests/test_pagination_all.py
+```
+
+---
+
 ### When to run which test
 
 | Symptom | Test to run |
 |---|---|
 | Scraper returns 0 results | `test_cloudflare.py` |
-| A specific listing is missing fields | `test_detail.py` |
+| A specific Zonaprop listing is missing fields | `test_detail.py` |
 | A listing shows only 1 image | `test_images.py` |
-| Only page 1 is scraped | `test_pagination.py` |
+| Only page 1 is scraped (Zonaprop) | `test_pagination.py` |
 | Result count seems higher than expected | `test_suggested.py` |
+| Argenprop scraper not working | `test_argenprop.py` |
+| Argenprop only scrapes page 1 | `test_argenprop_pagination.py` |
+| MercadoLibre scraper not working | `test_mercadolibre.py` |
+| Remax scraper not working | `test_remax.py` |
+| Deduplication or price history issues | `test_persistence.py` |
+| Any engine's pagination broken | `test_pagination_all.py` |
