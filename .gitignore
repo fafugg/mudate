@@ -11,6 +11,9 @@ __pycache__/
 venv/
 .env
 
+# ── Freebuff ─────────────────────────────────────────────────────────────────
+.freebuff/
+
 # ── Dev artifacts ─────────────────────────────────────────────────────────────
 frontend/index-backup.html
 backend/all_requests.json
