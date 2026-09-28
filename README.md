@@ -35,7 +35,7 @@ cd mudate
 docker compose up
 ```
 
-Open **http://localhost:8000** — that's it.
+Open **http://localhost:8010** — that's it.
 
 Data is saved to `./data/db.json` on your machine and survives container restarts.
 
@@ -114,10 +114,10 @@ python3 -m venv .venv
 #### 3. Run the app
 
 ```bash
-.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8010 --reload
 ```
 
-Open **http://localhost:8000**.
+Open **http://localhost:8010**.
 
 #### 4. (Optional) Run as a background service
 
@@ -125,7 +125,7 @@ To keep the app running after closing the terminal:
 
 ```bash
 # Option A: nohup
-nohup .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 > /tmp/mudate.log 2>&1 &
+nohup .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8010 > /tmp/mudate.log 2>&1 &
 
 # Option B: systemd user service
 mkdir -p ~/.config/systemd/user
@@ -137,7 +137,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=%h/mudate/backend
-ExecStart=%h/mudate/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+ExecStart=%h/mudate/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8010
 # Uncomment when the machine has no display (headless server, Raspberry Pi, NAS):
 # Environment=PLAYWRIGHT_HEADLESS=1
 Restart=on-failure
@@ -178,7 +178,7 @@ OPENCAGE_API_KEY=your_key_here
 
 **Manually**, prefix the command:
 ```bash
-OPENCAGE_API_KEY=your_key_here uvicorn main:app --host 0.0.0.0 --port 8000
+OPENCAGE_API_KEY=your_key_here uvicorn main:app --host 0.0.0.0 --port 8010
 ```
 
 ---
@@ -290,8 +290,8 @@ docker compose up --build   # rebuilds the image with the latest code
 
   Confirm with `.venv/bin/python tests/test_cloudflare.py` before and after.
 - **Playwright install failures**: run `playwright install --with-deps chromium` so the packages are resolved for your distro. If you install them manually, check the package names above — the ALSA library is `libasound2` on Debian 11/12 and Raspberry Pi OS but `libasound2t64` on Ubuntu 24.04+ / Debian 13.
-- **Port conflicts**: If port 8000 is in use, pass `--port 8080` to uvicorn (or change the port in `docker-compose.yml`).
-- **zsh activation errors**: If `source .venv/bin/activate` fails in zsh, use the direct venv path instead: `.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000`.
+- **Port conflicts**: Mudate defaults to port **8010**; if it's already in use, pass a different `--port` to uvicorn (or change the host port in `docker-compose.yml`).
+- **zsh activation errors**: If `source .venv/bin/activate` fails in zsh, use the direct venv path instead: `.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8010`.
 
 ---
 

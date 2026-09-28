@@ -2,7 +2,7 @@ services:
   app:
     build: .
     ports:
-      - "8000:8000"
+      - "8010:8010"
     volumes:
       # db.json is stored in ./data/ on your host so it survives container restarts
       - ./data:/data

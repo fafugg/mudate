@@ -26,11 +26,11 @@ RUN mkdir -p /data
 ENV DB_PATH=/data/db.json \
     PYTHONUNBUFFERED=1
 
-EXPOSE 8000
+EXPOSE 8010
 
 # Use $PORT so Railway (and similar platforms) can inject their own port;
-# fall back to 8000 for local Docker usage.
+# fall back to 8010 for local Docker usage.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD curl -f http://localhost:8000/api/scheduler || exit 1
+  CMD curl -f http://localhost:8010/api/scheduler || exit 1
 
-CMD ["sh", "-c", "cd /app/backend && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "cd /app/backend && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8010}"]

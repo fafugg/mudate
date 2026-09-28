@@ -48,7 +48,7 @@ cd mudate
 docker compose up
 ```
 
-Open **http://localhost:8000**.
+Open **http://localhost:8010**.
 
 Data is stored in `./data/db.json` on your machine and survives container restarts.
 
@@ -75,7 +75,7 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 playwright install --with-deps chromium   # also installs the distro's libraries
 
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn main:app --host 0.0.0.0 --port 8010 --reload
 ```
 
 > `--with-deps` is what resolves the system package names for you. Installing
@@ -83,7 +83,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 > library is `libasound2`, while Ubuntu 24.04+ and Debian 13 call it
 > `libasound2t64`.
 
-Open **http://localhost:8000**.
+Open **http://localhost:8010**.
 
 ---
 
@@ -106,7 +106,7 @@ OPENCAGE_API_KEY=your_key_here
 **Manually**, prefix the command:
 
 ```bash
-OPENCAGE_API_KEY=your_key_here uvicorn main:app --host 0.0.0.0 --port 8000
+OPENCAGE_API_KEY=your_key_here uvicorn main:app --host 0.0.0.0 --port 8010
 ```
 
 ---
