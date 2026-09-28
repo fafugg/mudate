@@ -14,6 +14,23 @@ UA = settings.user_agent
 _INIT_SCRIPT = "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
 
 
+class ScrapeBlockedError(Exception):
+    """The portal refused us (Cloudflare challenge / HTTP 403).
+
+    Raised instead of silently returning zero listings, so the run surfaces an
+    actionable message in the UI. The text is user-facing: it names the browser
+    profile directory and the command that resets it, because a profile poisoned
+    with bot-flagged cookies keeps failing after every retry.
+
+    runner.py catches this separately from generic scraper errors and gives the
+    message priority in the run banner.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
 class BaseScraper(ABC):
     """Clase base para scrapers de portales inmobiliarios.
 

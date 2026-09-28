@@ -263,7 +263,7 @@
     <div class="space-y-3" x-show="sessions.length > 0">
       <template x-for="s in sessions" :key="s.id">
         <div class="relative bg-white rounded-xl shadow-sm hover:shadow-md border border-slate-100 hover:border-blue-200 p-4 transition flex flex-col gap-2 group"
-          :class="s.id === runSessionId && (isRunning || runStatus?.status === 'done' || runStatus?.status === 'error' || runStatus?.status === 'cancelled') && !runDismissed ? 'border-blue-200' : ''">
+          :class="s.id === runSessionId && (isRunning || runStatus?.status === 'done' || runStatus?.status === 'partial' || runStatus?.status === 'error' || runStatus?.status === 'cancelled') && !runDismissed ? 'border-blue-200' : ''">
           <button
             @click.stop="confirmDeleteSession(s)"
             class="session-delete-btn absolute top-2 right-2 p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 transition opacity-0 group-hover:opacity-100"
@@ -291,11 +291,12 @@
             <span class="text-slate-300 group-hover:text-blue-400 text-lg shrink-0">→</span>
           </div>
           <!-- Run progress bar — only for the session that owns the active run -->
-          <div x-show="s.id === runSessionId && (isRunning || runStatus?.status === 'done' || runStatus?.status === 'error' || runStatus?.status === 'cancelled') && !runDismissed">
+          <div x-show="s.id === runSessionId && (isRunning || runStatus?.status === 'done' || runStatus?.status === 'partial' || runStatus?.status === 'error' || runStatus?.status === 'cancelled') && !runDismissed">
             <div class="rounded-lg px-3 py-2 text-sm flex items-center gap-3"
               :class="{
                 'bg-blue-50 border border-blue-200': isRunning,
                 'bg-green-50 border border-green-200': runStatus?.status === 'done',
+                'bg-amber-50 border border-amber-200': runStatus?.status === 'partial',
                 'bg-red-50 border border-red-200': runStatus?.status === 'error',
                 'bg-slate-50 border border-slate-200': runStatus?.status === 'cancelled',
               }">
@@ -380,11 +381,12 @@
     </div>
 
     <!-- Run progress bar -->
-    <div x-show="(isRunning || runStatus?.status === 'done' || runStatus?.status === 'error' || runStatus?.status === 'cancelled') && !runDismissed" class="mb-3">
+    <div x-show="(isRunning || runStatus?.status === 'done' || runStatus?.status === 'partial' || runStatus?.status === 'error' || runStatus?.status === 'cancelled') && !runDismissed" class="mb-3">
       <div class="rounded-lg px-4 py-3 text-sm flex items-center gap-3"
         :class="{
           'bg-blue-50 border border-blue-200': isRunning,
           'bg-green-50 border border-green-200': runStatus?.status === 'done',
+          'bg-amber-50 border border-amber-200': runStatus?.status === 'partial',
           'bg-red-50 border border-red-200': runStatus?.status === 'error',
           'bg-slate-50 border border-slate-200': runStatus?.status === 'cancelled',
         }">

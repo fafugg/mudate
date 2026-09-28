@@ -73,10 +73,15 @@ python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
 pip install -r requirements.txt
-playwright install chromium
+playwright install --with-deps chromium   # also installs the distro's libraries
 
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
+
+> `--with-deps` is what resolves the system package names for you. Installing
+> manually is error-prone — on Debian 11/12 and Raspberry Pi OS the ALSA
+> library is `libasound2`, while Ubuntu 24.04+ and Debian 13 call it
+> `libasound2t64`.
 
 Open **http://localhost:8000**.
 
@@ -90,6 +95,7 @@ All settings are passed as environment variables.
 |---|---|---|
 | `DB_PATH` | `../db.json` | Path to the JSON database file |
 | `OPENCAGE_API_KEY` | *(empty)* | Optional. Improves geocoding accuracy when Nominatim fails. Free tier: 2,500 req/day. Get one at [opencagedata.com](https://opencagedata.com) |
+| `PLAYWRIGHT_HEADLESS` | *(auto)* | `1` forces headless, `0` forces headed. Zonaprop defaults to **headed** mode unless Docker is detected (`/.dockerenv`), because a real window bypasses Cloudflare more reliably. On a machine without a display — Raspberry Pi, NAS, VPS — set `PLAYWRIGHT_HEADLESS=1` in the process environment, otherwise Chromium tries to open a window and exits |
 
 **With Docker**, create a `.env` file next to `docker-compose.yml`:
 
@@ -172,7 +178,8 @@ The scheduler re-scrapes every session for every user every morning at **08:00 A
 - **URL:** `https://www.zonaprop.com.ar`
 - **Method:** Playwright (Chromium, stealth mode) — the site is a Next.js app that requires JavaScript execution.
 - **Scraping strategy:** Listing cards are extracted from the search results pages via a JavaScript evaluation of the DOM. Detail pages are loaded individually to extract full data (images, description, specs). Detail pages are skipped for listings already in the database — only card-level data (price, size) is re-fetched to detect price changes.
-- **Anti-bot notes:** Zonaprop uses Cloudflare. The scraper uses a persistent browser profile so that Cloudflare cookies (`cf_clearance`) survive between runs. Headed mode (local) and headless mode (Docker) use **separate browser profiles** to prevent a Docker run from poisoning the local profile with bot-flagged cookies.
+- **Anti-bot notes:** Zonaprop uses Cloudflare. The scraper uses a persistent browser profile so that Cloudflare cookies (`cf_clearance`) survive between runs. Headed mode (local) and headless mode (Docker) use **separate browser profiles** to prevent a Docker run from poisoning the local profile with bot-flagged cookies. The profile in use is `~/.mudate_browser` when headed and `~/.mudate_browser_headless` when headless.
+- **Blocked detection:** every Zonaprop navigation is checked for a Cloudflare interstitial or a block status (`403`, `429`, `503`, …). When one is found the scraper raises `ScrapeBlockedError` instead of silently returning zero listings, and the run banner prints the profile directory to delete (`rm -rf <profile>`). A block status is authoritative and needs no page inspection; otherwise the page must not look like a genuine results page (listing cards, `__PRELOADED_STATE__` or a title naming the site) before any marker is considered, so listing text is never mistaken for a challenge. Verified against a live Zonaprop fetch, including a real Spanish-language 403 challenge.
 
 ### Argenprop
 
@@ -295,6 +302,7 @@ mudate/
 │   │
 │   └── tests/
 │       ├── test_cloudflare.py       # Diagnose Cloudflare blocks / profile poisoning
+│       ├── test_block_detection.py  # Unit tests for block detection (offline)
 │       ├── test_detail.py           # Smoke-test Zonaprop detail page extractor
 │       ├── test_images.py           # Debug Zonaprop image extraction failures
 │       ├── test_pagination.py       # Validate Zonaprop click-based pagination
@@ -527,10 +535,33 @@ python tests/test_cloudflare.py
 5. Whether `[data-posting-type]` listing cards are found in the DOM
 6. Cloudflare cookies (`cf_clearance`, `__cf_bm`, etc.)
 
-**Common fix:** If the profile is poisoned (a Docker/headless run stored bot-flagged cookies), delete it:
+**Common fix:** If the profile is poisoned (a Docker/headless run stored bot-flagged cookies), delete the profile the run is actually using — the script prints the exact path in its verdict:
 ```bash
-rm -rf ~/.mudate_browser
+rm -rf ~/.mudate_browser           # headed run (local)
+rm -rf ~/.mudate_browser_headless  # headless run / Docker
 ```
+A blocked run also prints this command in the run banner.
+
+---
+
+### `test_block_detection.py` — Unit tests for block detection
+
+Covers the logic that decides whether a Zonaprop page is a Cloudflare challenge rather than a results page. **Runs fully offline**: no browser is launched and no network request is made, because detection is factored out of navigation into the pure function `_looks_like_challenge()`.
+
+**Run (from `backend/`):**
+```bash
+python -m tests.test_block_detection
+python tests/test_block_detection.py   # equivalent
+```
+
+**What it covers:**
+1. Block statuses (`403`, `429`, `503`, …) are always treated as blocked, and win even when the page cannot be inspected at all
+2. English and Spanish challenge titles (`Just a moment…`, `Un momento…`, `Attention Required!`)
+3. Challenge text markers (`verifying you are human`, `verifica que eres un humano`, and the Spanish 403 wording observed live on Zonaprop)
+4. Challenge **markup** markers (`_cf_chl_opt`, `cf-browser-verification`) — these live in a `<script>`, so they are matched against the markup, never `innerText`
+5. The false-positive guard — a page recognised as a results page is never flagged, and `un momento` matches the **title** only, never listing text
+6. `_blocked_error()` produces a message containing the profile path and the `rm -rf` command
+7. `_raise_if_blocked()` raises `ScrapeBlockedError` on a block, and stays silent on a healthy page, a malformed payload, or when the page cannot be inspected
 
 ---
 
@@ -638,7 +669,7 @@ Tests the persistence layer's behavior when scraping multiple engines in the sam
 
 **Run:**
 ```bash
-python tests/test_persistence.py
+python -m tests.test_persistence
 ```
 
 ---
@@ -659,6 +690,7 @@ python tests/test_pagination_all.py
 | Symptom | Test to run |
 |---|---|
 | Scraper returns 0 results | `test_cloudflare.py` |
+| Run banner reports "Zonaprop bloqueado" (HTTP 403) | `test_cloudflare.py` to diagnose the profile, `test_block_detection.py` for the detection logic |
 | A specific Zonaprop listing is missing fields | `test_detail.py` |
 | A listing shows only 1 image | `test_images.py` |
 | Only page 1 is scraped (Zonaprop) | `test_pagination.py` |

@@ -610,7 +610,9 @@ function app() {
         this.runStatus = await api('GET', `/runs/${this.runId}`);
         if (this.runStatus.status !== 'running') {
           this.stopPolling();
-          if (this.runStatus.status === 'done') {
+          if (this.runStatus.status === 'done' || this.runStatus.status === 'partial') {
+            // 'partial' still persisted whatever succeeded, so refresh too —
+            // otherwise the table stays stale when one source is blocked.
             await this.selectSession(this.currentSession.id);
             // Auto-show same-engine dedup modal if reactivations detected
             const dedup = this.runStatus.same_engine_dedup;

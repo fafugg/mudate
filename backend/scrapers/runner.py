@@ -8,6 +8,7 @@ import asyncio
 from typing import Any, Dict, List, Optional
 
 from storage import _now, read_db
+from .base import ScrapeBlockedError
 from .factory import get_scraper
 from .persistence import persist_listings
 from same_engine_dedup import find_same_engine_duplicates
@@ -105,7 +106,9 @@ async def run_scrape(
 
         # Multiple sources — sequential (avoids Playwright resource conflicts)
         all_listings: list = []
-        source_errors: list = []
+        source_errors: list = []   # union: drives has_partial / has_error
+        other_errors: list = []    # non-block failures, "engine: msg"
+        blocked_errors: list = []  # bare user-facing hints (already readable)
         for i, source in enumerate(sources):
             if should_cancel():
                 break
@@ -115,8 +118,17 @@ async def run_scrape(
                 listings = await _scrape_one(source)
                 all_listings.extend(listings)
                 progress(f"{engine}: {len(listings)} propiedades", len(all_listings), len(all_listings))
+            except ScrapeBlockedError as e:
+                # The portal refused us. `str(e)` already tells the user which
+                # profile directory to delete, so it must reach the run banner
+                # verbatim — the errors[] array is never rendered by the UI.
+                source_errors.append(f"{engine}: {e}")
+                blocked_errors.append(str(e))
+                runs[run_id]["errors"].append(str(e))
+                logger.error("Scrape blocked %s: %s", engine, e)
             except Exception as e:
                 source_errors.append(f"{engine}: {e}")
+                other_errors.append(f"{engine}: {e}")
                 runs[run_id]["errors"].append(f"{engine}: {e}")
                 logger.error("Scrape error %s: %s", engine, e)
 
@@ -155,11 +167,16 @@ async def run_scrape(
 
         if has_error:
             status = "error"
-            message = f"Error: {source_errors[0]}"
+            # Prefer the block hint over a generic message: it is actionable.
+            headline = blocked_errors[0] if blocked_errors else source_errors[0]
+            message = f"Error: {headline}"
         elif has_partial:
             status = "partial"
-            failed = ", ".join(source_errors)
-            message = f"Listo. {len(all_listings)} propiedades procesadas. Falló: {failed}"
+            message = f"Listo. {len(all_listings)} propiedades procesadas."
+            if other_errors:
+                message += f" Falló: {', '.join(other_errors)}."
+            if blocked_errors:
+                message += f" {blocked_errors[0]}"
         else:
             status = "done"
             message = f"Listo. {len(all_listings)} propiedades procesadas."

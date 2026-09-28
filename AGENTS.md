@@ -84,6 +84,7 @@ mudate/
 |---|---|
 | **Multi-engine scraping** | Zonaprop, Argenprop, MercadoLibre, Remax — Playwright with stealth anti-detection |
 | **Cloudflare bypass** | Persistent browser profiles; separate profiles for headless vs headed runs |
+| **Block detection** | Zonaprop 403/challenge responses raise `ScrapeBlockedError`; the run banner then suggests deleting the poisoned browser profile |
 | **Price history** | Every price change recorded per property; % change shown in table |
 | **Geocoding** | Nominatim (pipelined rate limiter) → OpenCage fallback; manual address override |
 | **Interactive map** | Leaflet + OSM; color-coded pins by review status; fly-to on click; canvas rendering |

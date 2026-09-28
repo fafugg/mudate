@@ -12,7 +12,7 @@ from playwright.async_api import async_playwright
 
 from contextlib import asynccontextmanager
 
-from .base import BaseScraper, UA, normalize_phone, parse_price
+from .base import BaseScraper, ScrapeBlockedError, UA, normalize_phone, parse_price
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,154 @@ _HEADLESS = (
 _PROFILE_DIR = os.path.expanduser(
     "~/.mudate_browser_headless" if _HEADLESS else "~/.mudate_browser"
 )
+
+# ── Block detection (Cloudflare challenge / HTTP 403) ─────────────────────────
+
+# Statuses Cloudflare or the origin return when they refuse the request.
+_BLOCK_STATUSES = {401, 403, 405, 407, 408, 418, 429, 451, 503}
+
+# Interstitial titles (English and Spanish variants, matching
+# tests/test_cloudflare.py). Matched against document.title.
+_CHALLENGE_TITLE = (
+    "just a moment",
+    "attention required",
+    "access denied",
+    "checking your browser",
+    "un momento",
+)
+
+# Text the interstitial renders literally. Matched against document.body.innerText
+# — never against markup, because script contents are not rendered text.
+_CHALLENGE_TEXT = (
+    "just a moment",
+    "verifying you are human",
+    "verifica que eres un humano",
+    "checking your browser before accessing",
+    "enable javascript and cookies to continue",
+    "performing security verification",
+    "this process is automatic",
+    "your browser will redirect shortly",
+    # Spanish variant observed live on a 403 from zonaprop.com.ar
+    "verificación de seguridad en curso",
+    "protegerse contra bots maliciosos",
+)
+
+# Challenge bootstrap, matched against the markup because it lives in a <script>
+# and never reaches innerText. It is written only while a challenge is being
+# served, so a healthy page — including one with an interactive Turnstile
+# widget, which does not define _cf_chl_opt — never carries it.
+_CHALLENGE_MARKUP = (
+    "_cf_chl_opt",
+    "cf-browser-verification",
+)
+
+
+def _looks_like_challenge(
+    status: Optional[int],
+    title: str,
+    text: str,
+    has_challenge_bootstrap: bool,
+    is_results_page: bool,
+) -> tuple:
+    """Pure block detection — no browser needed, so it stays unit-testable.
+
+    status                  HTTP status of the navigation (None when unavailable).
+    title                   document.title of the loaded page.
+    text                    First ~2 KB of document.body.innerText.
+    has_challenge_bootstrap Whether the markup carries the Cloudflare challenge
+                            bootstrap (checked in-page, see _CHALLENGE_MARKUP).
+    is_results_page         Whether the page looks like a genuine Zonaprop
+                            results page: listing cards, __PRELOADED_STATE__ or
+                            a title that names the site. Verified against a live
+                            page — healthy results are never flagged, even when
+                            their text happens to contain a marker.
+
+    Returns (blocked, reason).
+    """
+    if status in _BLOCK_STATUSES:
+        return True, f"HTTP {status}"
+    if is_results_page:
+        return False, ""
+
+    t = (title or "").lower()
+    s = (text or "").lower()
+    for marker in _CHALLENGE_TITLE:
+        if marker in t:
+            return True, f'página de desafío ("{title.strip()}")'
+    if has_challenge_bootstrap:
+        return True, "página de desafío de Cloudflare (bootstrap)"
+    for marker in _CHALLENGE_TEXT:
+        if marker in s:
+            return True, f"página de desafío de Cloudflare ({marker})"
+    return False, ""
+
+
+# Markers are serialized into the page script so Python stays the single source
+# of truth, and so markup matching happens in-page instead of shipping hundreds
+# of KB of HTML back on every navigation.
+_DETECT_SCRIPT = (
+    """() => {
+    const title = document.title || '';
+    const html = document.documentElement.innerHTML || '';
+    return {
+        title: title.slice(0, 300),
+        text: (document.body?.innerText || '').slice(0, 2000),
+        hasBootstrap: __MARKERS__.some(m => html.includes(m)),
+        isResults: !!document.querySelector('[data-posting-type]')
+                || !!window.__PRELOADED_STATE__
+                || /zonaprop/i.test(title),
+    };
+}"""
+).replace("__MARKERS__", json.dumps(list(_CHALLENGE_MARKUP)))
+
+
+async def _detect_block(page, resp) -> tuple:
+    """Detect a Cloudflare challenge/block on the current page.
+
+    Returns (blocked, reason). Never raises: a failure to inspect the page is
+    reported as "not blocked" so detection can never abort a healthy scrape.
+    A block status short-circuits first, so it is reported even when the page
+    cannot be inspected at all (destroyed context, navigation error, …).
+    """
+    status = getattr(resp, "status", None)
+    if status in _BLOCK_STATUSES:
+        return True, f"HTTP {status}"
+    try:
+        info = await page.evaluate(_DETECT_SCRIPT)
+        if not isinstance(info, dict):
+            return False, ""
+        return _looks_like_challenge(
+            status,
+            info.get("title", ""),
+            info.get("text", ""),
+            bool(info.get("hasBootstrap")),
+            bool(info.get("isResults")),
+        )
+    except Exception:
+        return False, ""
+
+
+def _blocked_error(reason: str) -> ScrapeBlockedError:
+    """Build the user-facing block message (Spanish, shown in the run banner)."""
+    return ScrapeBlockedError(
+        f"Zonaprop bloqueado ({reason}). Es probable que el perfil del navegador "
+        f"tenga cookies marcadas por Cloudflare (perfil envenenado). "
+        f"Elimina el perfil y vuelve a intentarlo: rm -rf {_PROFILE_DIR}"
+    )
+
+
+async def _raise_if_blocked(page, resp) -> None:
+    """Raise ScrapeBlockedError when the portal is refusing us."""
+    blocked, reason = await _detect_block(page, resp)
+    if not blocked:
+        return
+    logger.error(
+        "ZP block detected (%s). Reset the profile with: rm -rf %s "
+        "— then diagnose with: python tests/test_cloudflare.py",
+        reason, _PROFILE_DIR,
+    )
+    raise _blocked_error(reason)
+
 
 _TYPE_MAP = {
     "House": "Casa",
@@ -186,8 +334,7 @@ async def _collect_all_pages(
     )
     await asyncio.sleep(2)
 
-    if resp and resp.status == 403:
-        return [], {}
+    await _raise_if_blocked(page, resp)
 
     await _accept_cookies(page)
     await asyncio.sleep(1)
@@ -199,6 +346,13 @@ async def _collect_all_pages(
     logger.info(
         "ZP paging info: %d total results, %d pages", total_results, total_pages
     )
+
+    if not paging_info:
+        # A results page always exposes paging via __PRELOADED_STATE__ or a
+        # numeric <title>. Missing both means we are on an interstitial that
+        # answered 200 — re-check for a challenge before giving up.
+        await _raise_if_blocked(page, resp)
+        logger.warning("ZP paging info missing — unexpected page layout")
 
     current_page = 1
     prev_card_ids: set = set()
@@ -213,6 +367,10 @@ async def _collect_all_pages(
 
         cards = await _extract_cards_js(page)
         if not cards:
+            # No cards means the page is either a challenge that slipped past
+            # the status check, or a layout change. Detect before bailing out —
+            # this also covers the click-based pagination fallback path.
+            await _raise_if_blocked(page, None)
             break
 
         added = 0
@@ -245,8 +403,13 @@ async def _collect_all_pages(
                 next_url, wait_until="domcontentloaded", timeout=30000
             )
             await asyncio.sleep(2)
+            await _raise_if_blocked(page, nav_resp)
             if nav_resp and nav_resp.status == 200:
                 navigated = True
+        except ScrapeBlockedError:
+            # Never swallow a block: falling through to the click fallback would
+            # just hide it and end the run with zero results and no explanation.
+            raise
         except Exception:
             pass
 

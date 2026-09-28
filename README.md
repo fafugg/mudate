@@ -63,13 +63,13 @@ Deploy your own instance to [Railway](https://railway.app) with one click:
 #### 1. Install system dependencies
 
 ```bash
-# Debian/Ubuntu
+# Debian 11/12, Ubuntu 22.04, Raspberry Pi OS
 sudo apt update && sudo apt install -y python3 python3-venv python3-pip git
 
-# Playwright browser dependencies (required for headless Chrome)
+# Playwright browser libraries (manual fallback — see note below)
 sudo apt install -y libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
   libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
-  libgbm1 libpango-1.0-0 libcairo2 libasound2t64 libwayland-client0
+  libgbm1 libpango-1.0-0 libcairo2 libasound2 libwayland-client0
 
 # Fedora/RHEL
 sudo dnf install -y python3 python3-virtualenv git
@@ -84,6 +84,16 @@ sudo pacman -S nss atk at-spi2-core cups libdrm libxkbcommon libxcomposite \
   libxdamage libxfixes libxrandr mesa pango cairo alsa-lib
 ```
 
+> **Playwright's browser libraries:** the commands above are a manual
+> fallback. Step 2 runs `playwright install --with-deps chromium`, which
+> detects your distribution and installs the exact packages it needs — prefer
+> that over installing them by hand.
+>
+> If you do install them yourself, note that the ALSA package was renamed:
+> `libasound2` on Debian 11/12, Ubuntu 22.04 and Raspberry Pi OS, but
+> `libasound2t64` on Ubuntu 24.04+ and Debian 13. Using the wrong name makes
+> `apt` fail with *"Unable to locate package"*.
+
 #### 2. Clone and set up the project
 
 ```bash
@@ -96,8 +106,9 @@ python3 -m venv .venv
 # Install Python dependencies
 .venv/bin/pip install -r requirements.txt
 
-# Install Playwright Chromium browser (~180 MB download)
-.venv/bin/playwright install chromium
+# Install Playwright Chromium (~180 MB download) and its system libraries.
+# --with-deps resolves the right package names for your distro automatically.
+.venv/bin/playwright install --with-deps chromium
 ```
 
 #### 3. Run the app
@@ -127,6 +138,8 @@ After=network.target
 Type=simple
 WorkingDirectory=%h/mudate/backend
 ExecStart=%h/mudate/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+# Uncomment when the machine has no display (headless server, Raspberry Pi, NAS):
+# Environment=PLAYWRIGHT_HEADLESS=1
 Restart=on-failure
 
 [Install]
@@ -142,6 +155,7 @@ systemctl --user enable --now mudate
 ```bash
 export OPENCAGE_API_KEY=your_key_here   # improves geocoding accuracy
 export DB_PATH=/path/to/db.json         # custom database location
+export PLAYWRIGHT_HEADLESS=1            # REQUIRED on a server with no display (Raspberry Pi, NAS, VPS)
 ```
 
 ---
@@ -154,6 +168,7 @@ All settings are passed as environment variables.
 |---|---|---|
 | `DB_PATH` | `../db.json` | Path to the JSON database file |
 | `OPENCAGE_API_KEY` | *(empty)* | Optional — improves geocoding accuracy. Free tier: 2 500 req/day. Get one at [opencagedata.com](https://opencagedata.com/api#free-trial) |
+| `PLAYWRIGHT_HEADLESS` | *(auto)* | `1` forces headless, `0` forces headed. By default Zonaprop runs **headed** unless Docker is detected (`/.dockerenv`). On a server without a display (Raspberry Pi, NAS, VPS) set `PLAYWRIGHT_HEADLESS=1` in the service environment, otherwise Chromium tries to open a window and the scrape fails |
 
 **With Docker**, set variables in a `.env` file next to `docker-compose.yml`:
 
@@ -269,8 +284,12 @@ docker compose up --build   # rebuilds the image with the latest code
 
 ## Troubleshooting
 
-- **Cloudflare blocks**: If the scraper is blocked by Cloudflare, delete the browser profile directory: `rm -rf ~/.mudate_browser` and restart the app.
-- **Playwright install failures**: Install required system dependencies (`libnss3`, `libatk1.0-0`, `libatk-bridge2.0-0`, `libcups2`, etc.). See the Manual install instructions above for your distro.
+- **Cloudflare blocks (HTTP 403 or a "Just a moment…" page)**: the run banner now detects this and prints the exact profile to delete, e.g. `rm -rf /home/<you>/.mudate_browser_headless`. Zonaprop stores `cf_clearance` cookies in a persistent browser profile; once a profile is poisoned with bot-flagged cookies, every retry fails the same way, so clearing it is the fix — not re-running. Delete the profile your run is actually using, then restart the app:
+  - headed run (local) → `rm -rf ~/.mudate_browser`
+  - headless run / Docker → `rm -rf ~/.mudate_browser_headless`
+
+  Confirm with `.venv/bin/python tests/test_cloudflare.py` before and after.
+- **Playwright install failures**: run `playwright install --with-deps chromium` so the packages are resolved for your distro. If you install them manually, check the package names above — the ALSA library is `libasound2` on Debian 11/12 and Raspberry Pi OS but `libasound2t64` on Ubuntu 24.04+ / Debian 13.
 - **Port conflicts**: If port 8000 is in use, pass `--port 8080` to uvicorn (or change the port in `docker-compose.yml`).
 - **zsh activation errors**: If `source .venv/bin/activate` fails in zsh, use the direct venv path instead: `.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000`.
 
