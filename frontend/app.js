@@ -497,8 +497,12 @@ function app() {
           this.showConfirm(
             'Crear usuario',
             `El usuario "${this.username}" no existe. ¿Querés crearlo?`,
-            async () => {
-              this.loading = true;
+            // Synchronous state change only: GET /users/{username} never
+            // creates the user, so there is nothing to await here. Setting
+            // `loading` inside this callback would strand the full-screen
+            // overlay, because handleConfirm() runs actions outside any
+            // try/finally that could clear it.
+            () => {
               this.sessions = data.sessions || [];
               this.screen = 'sessions';
               window.scrollTo(0, 0);
