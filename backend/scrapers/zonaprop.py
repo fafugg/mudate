@@ -169,6 +169,42 @@ def _blocked_error(reason: str) -> ScrapeBlockedError:
     )
 
 
+def _should_abort_on_detail_blocks(blocked: int, attempted: int) -> bool:
+    """Whether a run's detail-page blocks are systemic enough to abort it.
+
+    Pure function so it stays unit-testable in isolation from navigation.
+
+    A single blocked detail page only costs that listing's detail data (address,
+    images, description) — the card-level fields still reach db.json — so it is
+    recoverable on the next run and must not kill a healthy one. Escalate only
+    when the whole run looks blocked.
+
+    Threshold follows the same "half the evidence" rule already used by
+    `_collect_all_pages`, `persist_listings` and `run_scrape`, so one block
+    policy is shared across the scraper. `blocked == attempted` short-circuits
+    it: a complete block always aborts, however small the session.
+    """
+    if blocked <= 0 or attempted <= 0:
+        return False
+    return blocked == attempted or (blocked >= 3 and blocked >= attempted * 0.5)
+
+
+# Fields that only a real property page produces. A Cloudflare interstitial
+# carries no property markup, so its extraction comes back empty — which makes
+# this the "we already suspect this page" signal for the marker inspection.
+_DETAIL_IDENTITY_FIELDS = (
+    "address", "description", "images", "type",
+    "covered_m2", "total_m2", "ambientes", "dormitorios", "real_estate",
+)
+
+
+def _is_usable_detail(detail: Optional[Dict[str, Any]]) -> bool:
+    """Whether a detail extraction produced any property-level content."""
+    if not detail:
+        return False
+    return any(detail.get(key) for key in _DETAIL_IDENTITY_FIELDS)
+
+
 async def _raise_if_blocked(page, resp) -> None:
     """Raise ScrapeBlockedError when the portal is refusing us."""
     blocked, reason = await _detect_block(page, resp)
@@ -253,12 +289,17 @@ class ZonapropScraper(BaseScraper):
             # ── Phase 2: visit detail pages — 2 tabs in parallel ──────────
             total = len(all_raw_cards)
             completed = 0
+            # Detail-page blocks are counted rather than fatal: one blocked page
+            # only costs that listing's details, so the run continues and only
+            # systemic failures escalate after the gather below.
+            detail_attempts = 0
+            blocked_details: List[str] = []
             sem = asyncio.Semaphore(2)
             context = page.context
             _headless = _HEADLESS
 
             async def _process_card(raw: dict) -> Dict[str, Any]:
-                nonlocal completed
+                nonlocal completed, detail_attempts
                 if cancel_check and cancel_check():
                     return {}
 
@@ -282,9 +323,20 @@ class ZonapropScraper(BaseScraper):
                                 ),
                             )
                         try:
+                            detail_attempts += 1
                             detail = await _scrape_detail(detail_page, listing["url"])
                             listing.update({k: v for k, v in detail.items() if v is not None})
                             await asyncio.sleep(random.uniform(0.3, 0.7))
+                        except ScrapeBlockedError as e:
+                            # Keep the card-level listing: it still reaches db.json
+                            # and is repaired on the next run once the profile is
+                            # cleared. The page is closed by the finally below, so
+                            # we never leak a tab per blocked card.
+                            blocked_details.append(str(e))
+                            logger.warning(
+                                "ZP detail blocked (%d/%d so far): %s",
+                                len(blocked_details), detail_attempts, e,
+                            )
                         finally:
                             await detail_page.close()
 
@@ -304,6 +356,29 @@ class ZonapropScraper(BaseScraper):
                 *[_process_card(raw) for raw in all_raw_cards]
             )
             results = [r for r in raw_results if r]
+
+            # Escalate only when the detail-page blocks look systemic. The card
+            # count is unaffected by them, so the paging partial check below and
+            # run_scrape's `partial` detection both miss this case entirely.
+            if blocked_details and not (cancel_check and cancel_check()):
+                if _should_abort_on_detail_blocks(
+                    len(blocked_details), detail_attempts
+                ):
+                    logger.error(
+                        "ZP detail blocks are systemic: %d/%d detail pages "
+                        "blocked. Reset the profile with: rm -rf %s "
+                        "— then diagnose with: python tests/test_cloudflare.py",
+                        len(blocked_details), detail_attempts, _PROFILE_DIR,
+                    )
+                    raise _blocked_error(
+                        f"{len(blocked_details)} de {detail_attempts} páginas "
+                        f"de detalle bloqueadas"
+                    )
+                logger.warning(
+                    "ZP %d/%d detail pages blocked — saving the run as-is; "
+                    "the missing details are refetched on the next run.",
+                    len(blocked_details), detail_attempts,
+                )
 
         # Warn if we got significantly fewer results than expected
         expected = paging_info.get("total", 0) if paging_info else 0
@@ -678,9 +753,20 @@ async def _wait_gallery(page, timeout: int) -> None:
 
 
 async def _scrape_detail(page, url: str) -> Dict[str, Any]:
-    """Navigate to a detail page, get rendered HTML, extract all fields."""
+    """Navigate to a detail page, get rendered HTML, extract all fields.
+
+    Raises ScrapeBlockedError when the portal refuses us, so the caller can
+    count blocks instead of silently losing the listing's detail data.
+    """
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        resp = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+        # A block status is authoritative and needs no page inspection, so exit
+        # before spending the waits below on selectors that can never appear —
+        # a fully blocked run of 500 cards wasted ~30 min waiting out here.
+        status = getattr(resp, "status", None)
+        if status in _BLOCK_STATUSES:
+            raise _blocked_error(f"HTTP {status}")
 
         # Run all three waits concurrently — worst case is max(each), not sum(each).
         # Previously sequential (up to 8+8+8 = 24 s); now up to max(6,6,8) = 8 s.
@@ -691,7 +777,21 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
         )
 
         html = await page.content()
-        return _extract_detail(html)
+        detail = _extract_detail(html)
+
+        # Answered 200 but nothing extractable: either a challenge served at the
+        # detail URL or a layout change. Only now do we read the page for markers,
+        # so listing text is never matched against them — and on a healthy page
+        # the isResults guard short-circuits the inspection entirely.
+        if not _is_usable_detail(detail):
+            await _raise_if_blocked(page, resp)
+
+        return detail
+    except ScrapeBlockedError:
+        # Never swallow a block: falling through to `return {}` hides the
+        # failure behind a "Listo. N propiedades procesadas." banner with no
+        # indication that the data is missing.
+        raise
     except Exception as e:
         logger.error("ZP detail error %s: %s: %s", url[-80:], type(e).__name__, e)
         return {}
