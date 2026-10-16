@@ -7,7 +7,16 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 import httpx
 
-from .base import BaseScraper, UA, coerce_float, coerce_int, normalize_phone
+from .base import (
+    BLOCK_STATUSES,
+    BaseScraper,
+    UA,
+    challenge_marker_in_page,
+    coerce_float,
+    coerce_int,
+    normalize_phone,
+    engine_blocked_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +105,28 @@ class RemaxScraper(BaseScraper):
                         total_items,
                     )
 
-                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                resp = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 await asyncio.sleep(3)
+
+                # Same contract as Argenprop: refused with nothing collected →
+                # surface it in the run banner; refused mid-pagination → keep
+                # the already-collected cards and let the 50%-safeguard and the
+                # next run recover the rest.
+                status = resp.status if resp else None
+                if status in BLOCK_STATUSES:
+                    if not results:
+                        raise engine_blocked_error("Remax", f"HTTP {status}")
+                    logger.warning("Remax returned %s mid-pagination on %s", status, url)
+                    break
+
+                marker = await challenge_marker_in_page(page)
+                if marker:
+                    if not results:
+                        raise engine_blocked_error(
+                            "Remax", f"desafío de Cloudflare ({marker})"
+                        )
+                    logger.warning("Remax served a challenge mid-pagination on %s", url)
+                    break
 
                 # Accept cookies if present
                 try:

@@ -190,6 +190,7 @@ The scheduler re-scrapes every session for every user every morning at **08:00 A
 - **URL:** `https://www.argenprop.com`
 - **Method:** Playwright (Chromium, stealth mode).
 - **Scraping strategy:** Similar to Zonaprop — search pages are paginated, detail pages are loaded for new listings only. DOM-based extraction pulls property specs, images, and agent info.
+- **Block handling:** a refused search page (HTTP 403/429/503) or a served Cloudflare challenge raises `ScrapeBlockedError`, which the run banner surfaces as `Falló: argenprop: …` — but only when nothing was collected yet; a mid-pagination block keeps the already-collected cards for the partial-scrape safeguard to guard.
 
 ### MercadoLibre
 
@@ -202,6 +203,7 @@ The scheduler re-scrapes every session for every user every morning at **08:00 A
 - **URL:** `https://www.remax.com.ar`
 - **Method:** Direct HTTP requests to the Remax API (`api-ar.redremax.com`), supplemented by Playwright for listing details.
 - **Scraping strategy:** Uses the internal Remax API for search results (no Cloudflare issues). Detail pages are scraped via Playwright for full property data.
+- **Block handling:** the Playwright search phase detects refusals the same way as Argenprop — HTTP 403/429/503 or a Cloudflare challenge marker with nothing collected yet raises `ScrapeBlockedError`; mid-pagination it keeps the already-collected cards.
 
 ### Nominatim (OpenStreetMap)
 
@@ -714,6 +716,17 @@ python tests/test_argenprop_pagination.py
 
 ---
 
+### `test_search_block_detection.py` — Argenprop/Remax search-phase blocks
+
+Offline tests for the search-phase block contract on Argenprop and Remax: a refused navigation (HTTP 403/429/503) or a served Cloudflare challenge raises `ScrapeBlockedError` when nothing has been collected yet, a mid-pagination block keeps the already-collected cards, and a healthy empty result page is never mistaken for a block.
+
+**Run:**
+```bash
+python -m tests.test_search_block_detection
+```
+
+---
+
 ### `test_mercadolibre.py` — Diagnostic tests for MercadoLibre
 
 Runs diagnostic tests against the MercadoLibre scraper, covering click-based pagination, listing card parsing, and detail page extraction.
@@ -804,6 +817,7 @@ python tests/test_pagination_all.py
 | Result count seems higher than expected | `test_suggested.py` |
 | Argenprop scraper not working | `test_argenprop.py` |
 | Argenprop only scrapes page 1 | `test_argenprop_pagination.py` |
+| Argenprop/Remax run says "Listo" but the engine's results look stale or empty | `test_search_block_detection.py` (detection), re-run the session to see the "Falló:" banner |
 | MercadoLibre scraper not working | `test_mercadolibre.py` |
 | Remax scraper not working | `test_remax.py` |
 | Deduplication or price history issues | `test_persistence.py` |

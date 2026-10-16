@@ -86,7 +86,7 @@ mudate/
 |---|---|
 | **Multi-engine scraping** | Zonaprop, Argenprop, MercadoLibre, Remax — Playwright with stealth anti-detection |
 | **Cloudflare bypass** | Persistent browser profiles; separate profiles for headless vs headed runs |
-| **Block detection** | Zonaprop 403/challenge responses raise `ScrapeBlockedError`; the run banner then suggests deleting the poisoned browser profile. Blocked deep pagination URLs (`pagina-10`+) recover via the site's SPA pager before escalating |
+| **Block detection** | Zonaprop 403/challenge responses raise `ScrapeBlockedError`; the run banner then suggests deleting the poisoned browser profile. Blocked deep pagination URLs (`pagina-10`+) recover via the site's SPA pager before escalating. Argenprop and Remax raise it too when the search phase is refused with nothing collected (HTTP 403/429/503 or a Cloudflare challenge marker); a mid-pagination block keeps the already-collected cards |
 | **Price history** | Every price change recorded per property; % change shown in table |
 | **Publish tracking** | `first_published_at` (original post date, stable across re-posts/merges) + `republish_count`; "Antigüedad" column and detail-panel age in days |
 | **Geocoding** | Nominatim (pipelined rate limiter) → OpenCage fallback; manual address override |
@@ -162,7 +162,7 @@ Deduplication: houses with same `search_engine_id` or URL across sessions are me
 | `backend/config.py:13-51` | `Settings` dataclass — all env vars and magic constants |
 | `backend/storage.py:36-48` | `atomic_update()` — write-to-temp-then-replace with filelock |
 | `backend/house_fields.py` | Single source of truth: `MUTABLE_LISTING_FIELDS`, `original_published_at()`, `advance_first_published()`, `bump_republish()`, `remember_price()`, `sync_mutable_fields()` (an image gallery is never replaced by a shorter one), `migrate_publish_fields()` |
-| `backend/scrapers/base.py:17-69` | `BaseScraper` ABC — `launch_browser()`, shared utils |
+| `backend/scrapers/base.py` | `BaseScraper` ABC — `launch_browser()`, shared utils, search-phase block helpers (`BLOCK_STATUSES`, `engine_blocked_error()`, `challenge_marker_in_page()`) |
 | `backend/scrapers/runner.py:47-163` | `run_scrape()` — orchestrates multi-source scrape lifecycle |
 | `backend/scrapers/persistence.py` | `persist_listings()` — merges scraped data into db.json, deduplicates, marks removed, counts re-activations |
 | `backend/same_engine_dedup.py` | `find_same_engine_duplicates()` / `apply_same_engine_dedup()` — reactivation detection & merge |
