@@ -329,7 +329,9 @@ mudate/
 │   └── dark.css             # Dark mode overrides
 │
 ├── scripts/
-│   └── reimage_argenprop.py # One-off script to re-scrape Argenprop images
+│   ├── reimage_argenprop.py # One-off script to re-scrape Argenprop images
+│   ├── repair_ml_m2.py      # Repair ML covered/total m² from detail pages
+│   └── repair_ml_images.py  # Restore ML galleries clobbered to card thumbnails
 │
 ├── data/                    # Created automatically — holds db.json (git-ignored)
 │   └── db.json
@@ -405,7 +407,7 @@ Merges a list of scraped listing dicts into the database in a single `atomic_upd
 - **Partial scrape safeguard:** If the scraper returned far fewer listings than the session previously had (likely Cloudflare block), removal is skipped to prevent mass data loss.
 
 #### `_merge(house, listing, now) → None`
-Updates a house record's mutable fields (price, images, specs, etc.) from a fresh listing dict without touching user-set fields (review, notes, manual_address, lat, lng) nor the publish-tracking fields. All field rules come from `house_fields.py`.
+Updates a house record's mutable fields (price, images, specs, etc.) from a fresh listing dict without touching user-set fields (review, notes, manual_address, lat, lng) nor the publish-tracking fields. All field rules come from `house_fields.py`. The one shrink-proof field is `images`: a shorter list (e.g. a search-card thumbnail) never replaces a stored detail-page gallery.
 
 ### Backend — `scrapers/factory.py`
 
@@ -459,6 +461,12 @@ Appends the current price to `previous_prices` when `new_price` differs.
 Copies non-null `MUTABLE_LISTING_FIELDS` from `source` onto `house`. Never
 touches user-set fields (review, notes, manual_address, lat, lng) nor the
 publish-tracking fields.
+
+`images` is the one field that never shrinks: known listings skip the detail
+page and the search card only carries a thumbnail (MercadoLibre: 1 image,
+Argenprop: up to 5), so a shorter list can neither replace the stored gallery
+nor wipe it with `[]` — only a gallery at least as long as the stored one is
+written (equal length still refreshes, so replaced photos are picked up).
 
 #### `migrate_publish_fields() → int`
 Backfills publish-tracking fields on every legacy house in `db.json`. Runs once
@@ -717,6 +725,17 @@ python tests/test_mercadolibre.py
 
 ---
 
+### `test_mercadolibre_m2.py` — MercadoLibre card-clobber regressions
+
+Offline regression tests for the two ways search-card data used to degrade stored records: the card's `floorSize` (the *covered* surface) being written to both `covered_m2` and `total_m2`, and the card's single thumbnail image shrinking the detail-page gallery on every daily run. Covers the Argentine number formats (`202,4 m²` → 202.4), the specs-table parser, and `persist_listings` keeping both the total surface and the gallery for known listings (ML and Argenprop).
+
+**Run:**
+```bash
+python -m tests.test_mercadolibre_m2
+```
+
+---
+
 ### `test_remax.py` — Diagnostic tests for Remax
 
 Runs diagnostic tests against the Remax scraper, covering API-based search, image URL construction, listing detail extraction, and URL format handling.
@@ -741,7 +760,7 @@ python -m tests.test_persistence
 
 ### `test_house_fields.py` — House publish-tracking field rules
 
-Unit tests for `house_fields.py`: earliest-date selection, original-date fallback, `advance_first_published` (never moves later), the "never overwrite publish fields" invariant, price history, and the idempotent startup migration.
+Unit tests for `house_fields.py`: earliest-date selection, original-date fallback, `advance_first_published` (never moves later), the "never overwrite publish fields" invariant, price history, the images never-shrink merge rule (card thumbnails cannot strip a detail-page gallery), and the idempotent startup migration.
 
 **Run:**
 ```bash
@@ -780,6 +799,7 @@ python tests/test_pagination_all.py
 | Run banner reports "Zonaprop bloqueado" (HTTP 403) | `test_cloudflare.py` to diagnose the profile, `test_block_detection.py` for the detection logic |
 | A specific Zonaprop listing is missing fields | `test_detail.py` |
 | A listing shows only 1 image | `test_images.py` |
+| Galleries shrank to 1 image after daily updates | `test_mercadolibre_m2.py` (regression), `scripts/repair_ml_images.py` (repair data) |
 | Only page 1 is scraped (Zonaprop) | `test_pagination.py` |
 | Result count seems higher than expected | `test_suggested.py` |
 | Argenprop scraper not working | `test_argenprop.py` |
