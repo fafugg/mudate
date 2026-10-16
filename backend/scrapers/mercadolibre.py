@@ -398,6 +398,27 @@ _IMAGES_READY_JS = """() => {
     return imgs.length >= 2;
 }"""
 
+# MercadoLibre serves two PDP layouts. The legacy one renders
+# `img.gallery-image__image` with the full photo in src; the current one renders
+# `img.ui-pdp-gallery__figure__image`, whose src is the `-O.webp` preview and
+# whose `data-zoom` is the full `-F.webp` photo. Reading only the legacy class
+# left every listing on the new layout with no images, so both are collected —
+# one URL per img (zoom when present, src otherwise) so a preview is never
+# stored next to its own full-size copy.
+_GALLERY_IMAGES_JS = """() => {
+    const out = [];
+    const push = (u) => {
+        if (u && u.startsWith('http') && !out.includes(u)) out.push(u);
+    };
+    for (const img of document.querySelectorAll('img.ui-pdp-gallery__figure__image')) {
+        push(img.getAttribute('data-zoom') || img.getAttribute('src'));
+    }
+    for (const img of document.querySelectorAll('img.gallery-image__image')) {
+        push(img.getAttribute('src'));
+    }
+    return out.slice(0, 40);
+}"""
+
 _SPECS_READY_JS = """() => {
     return [...document.querySelectorAll('table th')]
         .some(th => /superficie/i.test(th.textContent || ''));
@@ -505,6 +526,26 @@ async def _detail_from_http(url: str) -> Dict[str, Any]:
     return result
 
 
+def _redirected_away(url: str, page_url: str) -> bool:
+    """True when a listing URL ended up somewhere else (usually a search page).
+
+    A closed listing serves the search page directly (302) or hydrates the PDP
+    and only then soft-navigates to it.  Either way the final page belongs to
+    no listing, so its card images, description and surfaces must never be
+    written to this record — the search page's first card image is what a
+    missed redirect left on the affected listings.
+
+    The fragment must be dropped before matching: ML's redirect to search
+    carries the original URL encoded in ``#redirectedFromVip=<encoded url>``,
+    so a plain substring test still finds the MLA id on a search page.
+    """
+    match = re.search(r"(MLA-\d+)", url or "")
+    if not match:
+        return False
+    final = (page_url or "").split("#", 1)[0]
+    return match.group(1) not in final
+
+
 async def _scrape_detail(page, url: str) -> Dict[str, Any]:
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -513,8 +554,7 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
         # page.  Extracting from there would mix a results page into this
         # listing's record (wrong images, descriptions, surfaces), so bail out
         # to the HTTP path, which reports the redirect instead of guessing.
-        listing_id = re.search(r"(MLA-\d+)", url)
-        if listing_id and listing_id.group(1) not in page.url:
+        if _redirected_away(url, page.url):
             logger.info(
                 "ML detail %s: redirected to %s — falling back to HTTP",
                 url[-60:], page.url[:60],
@@ -530,6 +570,17 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
         )
         if not images_ready:
             await asyncio.sleep(2)
+
+        # A finalized listing can hydrate the PDP and only *then* soft-navigate
+        # to a search page, which the check at `goto` was too early to see.
+        # Re-checking here, before anything is read, is what keeps a search
+        # page's first card image out of this listing's record.
+        if _redirected_away(url, page.url):
+            logger.info(
+                "ML detail %s: navigated to %s after hydration — no data read",
+                url[-60:], page.url[:60],
+            )
+            return await _detail_from_http(url)
 
         result: Dict[str, Any] = {}
 
@@ -622,14 +673,8 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
             if addr_text and len(addr_text) < 200 and "whatsapp" not in addr_text.lower():
                 result["address"] = addr_text
 
-        # Extract house images from gallery (only gallery-image__image class)
-        # This filters out MercadoLibre banners, real estate logos, and map images
-        imgs = await page.evaluate("""() => {
-            return [...document.querySelectorAll('img.gallery-image__image')]
-                .map(i => i.src)
-                .filter(s => s && s.startsWith('http'))
-                .slice(0, 40);
-        }""")
+        # Extract the gallery images (both PDP layouts — see _GALLERY_IMAGES_JS)
+        imgs = await page.evaluate(_GALLERY_IMAGES_JS)
         if imgs:
             existing = result.get("images", [])
             for img in imgs:
