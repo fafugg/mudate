@@ -1230,6 +1230,8 @@
   <div x-show="lightboxImg" x-effect="document.body.style.overflow = lightboxImg ? 'hidden' : ''"
     @click.self="lightboxImg = null"
     @keydown.escape.window="lightboxImg = null"
+    @keydown.arrow-up.window="if (lightboxImg && !editingModalAddress) { $event.preventDefault(); lightboxImg = null; }"
+    @keydown.arrow-down.window="if (lightboxImg && !editingModalAddress) { $event.preventDefault(); lightboxImg = null; }"
     @keydown.arrow-left.window="if (!editingModalAddress) lightboxPrev()"
     @keydown.arrow-right.window="if (!editingModalAddress) lightboxNext()"
     class="fixed inset-0 bg-black/95 flex items-center justify-center z-[4100]">
@@ -1504,6 +1506,7 @@
         <div class="flex justify-between"><span class="text-slate-600 dark:text-slate-300">Navegar propiedades</span><kbd class="bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-500 font-mono">↑ ↓</kbd></div>
         <div class="flex justify-between"><span class="text-slate-600 dark:text-slate-300">Cerrar modal</span><kbd class="bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-500 font-mono">Esc</kbd></div>
         <div class="flex justify-between"><span class="text-slate-600 dark:text-slate-300">Navegar fotos</span><kbd class="bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-500 font-mono">← →</kbd></div>
+        <div class="flex justify-between"><span class="text-slate-600 dark:text-slate-300">Cerrar foto</span><kbd class="bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-500 font-mono">↑ ↓ / Esc</kbd></div>
         <div class="flex justify-between"><span class="text-slate-600 dark:text-slate-300">Guardar edición</span><kbd class="bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-500 font-mono">Enter</kbd></div>
       </div>
     </div>
