@@ -54,6 +54,14 @@ const MAP_LEGEND = [
   { label: 'Removida',     color: '#cbd5e1' },
 ];
 
+// ── Table column visibility defaults ─────────────────────────────────────────
+// Merged with the user's saved preferences so newly added columns default on.
+const VISIBLE_COLUMNS_DEFAULTS = {
+  status: true, review: true, info: true, link: true, id: true, provider: true, type: true,
+  address: true, price: true, m2: true, amb: true, dorm: true, expenses: true,
+  realEstate: true, age: true, updated: true,
+};
+
 // ── API helper — all fetch calls go through here ─────────────────────────────
 async function api(method, path, body = null) {
   const opts = { method, headers: {} };

@@ -4,6 +4,7 @@ import unicodedata
 from typing import Dict, List, Optional, Tuple
 
 from storage import _now, atomic_update, read_db
+from house_fields import advance_first_published, original_published_at
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,14 @@ def _merge_metadata(keep: dict, removed: dict) -> None:
             keep["notes"] = kept_notes + "\n---\n" + removed_notes
         else:
             keep["notes"] = removed_notes
+
+    # Cross-engine duplicates are the *same* property on another portal, not a
+    # re-post: keep the earliest original date and the highest re-post count.
+    advance_first_published(keep, original_published_at(removed))
+    keep["republish_count"] = max(
+        int(keep.get("republish_count") or 0),
+        int(removed.get("republish_count") or 0),
+    )
 
 
 def find_duplicates(session: dict, username: str) -> List[dict]:

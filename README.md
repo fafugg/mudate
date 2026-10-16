@@ -9,6 +9,7 @@ Filter, review, map, and export properties — all from a single self-hosted web
 
 - **Multi-engine scraping** — Zonaprop, Argenprop, MercadoLibre, and Remax via Playwright (stealth mode)
 - **Tracks price history** — every price change is recorded per property
+- **Tracks original publication date** — a stable "first posted" date and re-post counter survive re-scrapes and merges; the detail panel shows how many days the listing has been up
 - **Geocodes addresses** and shows pins on an interactive map (Leaflet + Nominatim)
 - **Filter & sort** by review, type, status, price, m², provider, and more
 - **Review system** — mark properties as Interesting, Contact, Discard, Unsure, or Duplicate
@@ -203,6 +204,7 @@ mudate/
 │   ├── config.py          # Centralized settings (env vars & constants)
 │   ├── schemas.py         # Pydantic request/response models
 │   ├── storage.py         # Atomic JSON read/write
+│   ├── house_fields.py    # Single source of truth for house-field rules
 │   ├── deduplicator.py    # Cross-engine fuzzy deduplication
 │   ├── same_engine_dedup.py # Same-engine reactivation detection
 │   ├── geocoder.py        # Address geocoding (Nominatim → OpenCage)

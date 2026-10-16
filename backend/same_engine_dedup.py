@@ -17,6 +17,13 @@ from deduplicator import (
     _PRICE_TOLERANCE,
     _M2_TOLERANCE,
 )
+from house_fields import (
+    advance_first_published,
+    bump_republish,
+    original_published_at,
+    remember_price,
+    sync_mutable_fields,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -151,20 +158,14 @@ def _summarize(h: dict) -> dict:
         "url": h.get("url", ""),
         "images": h.get("images", []),
         "description": h.get("description", ""),
+        "published_at": h.get("published_at"),
+        "first_published_at": original_published_at(h),
+        "created_at": h.get("created_at"),
+        "republish_count": h.get("republish_count", 0),
     }
 
 
 # ── Apply ─────────────────────────────────────────────────────────────────────
-
-# Mutable fields to sync from the new listing to the old house
-_SYNC_FIELDS = [
-    "type", "ambientes", "dormitorios", "banos", "toilettes",
-    "price", "currency", "price_per_m2", "expenses", "expenses_currency",
-    "address", "covered_m2", "total_m2", "floor", "parking", "amenities",
-    "orientation", "age_years", "condition",
-    "real_estate", "real_estate_phone", "published_at",
-    "images", "description",
-]
 
 
 def apply_same_engine_dedup(
@@ -177,6 +178,7 @@ def apply_same_engine_dedup(
     For each group:
     - Updates the old house with the new house's mutable fields
     - Records price change in previous_prices if applicable
+    - Keeps the earliest original publication date and counts the re-post
     - Transfers the new house's search_engine_id to the old house
     - Deletes the new house from the database
     - Removes the new house from the session's house_ids
@@ -199,20 +201,18 @@ def apply_same_engine_dedup(
             if not old_house or not new_house:
                 continue
 
-            # Sync mutable fields from new → old
-            new_price = new_house.get("price")
-            old_price = old_house.get("price")
+            # Record the old price before the new one is copied over.
+            remember_price(old_house, new_house.get("price"), now)
 
-            if new_price and old_price and new_price != old_price:
-                old_house.setdefault("previous_prices", []).append({
-                    "price": old_price,
-                    "currency": old_house.get("currency", "USD"),
-                    "timestamp": old_house.get("last_updated", now),
-                })
+            # Publish tracking must be resolved BEFORE sync_mutable_fields(),
+            # which overwrites ``published_at`` with the new (current) date.
+            # Keep the earliest original date; count this re-post plus any the
+            # new record already carried.
+            advance_first_published(old_house, original_published_at(new_house))
+            bump_republish(old_house, 1 + int(new_house.get("republish_count") or 0))
 
-            for field in _SYNC_FIELDS:
-                if new_house.get(field) is not None:
-                    old_house[field] = new_house[field]
+            # Sync mutable fields (never touches the publish-tracking fields).
+            sync_mutable_fields(old_house, new_house)
 
             # Transfer search_engine_id so future scrapes match the old house
             old_house["search_engine_id"] = new_house.get("search_engine_id")

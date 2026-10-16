@@ -140,6 +140,7 @@ You can cancel a run mid-way and the results scraped so far will be saved.
 | Change review status | Use the dropdown on each row (*A revisar*, *Interesante*, *En duda*, *Contactar*, *Descartada*) |
 | Leave a note | Open the detail panel (🔍 icon) and type in the Notes field |
 | See price history | Open the detail panel — previous prices are listed with timestamps |
+| See original date & age | Open the detail panel → **Fechas** shows *Antigüedad* (days) and *Re-publicaciones* (🔁); *Publicado originalmente* appears only when it differs from the current *Publicado* date |
 | View photos | Open the detail panel and click any image, or press ← → to browse |
 | See the original listing | Click the ↗ icon on any row |
 
@@ -284,6 +285,7 @@ mudate/
 │   ├── config.py            # Centralized settings (env vars & constants)
 │   ├── schemas.py           # Pydantic request/response models
 │   ├── storage.py           # Atomic JSON read/write with filelock
+│   ├── house_fields.py      # Single source of truth for house-field rules
 │   ├── deduplicator.py      # Cross-engine fuzzy deduplication
 │   ├── same_engine_dedup.py # Same-engine reactivation detection
 │   ├── geocoder.py          # Address → lat/lng (Nominatim cascade + OpenCage fallback)
@@ -314,6 +316,8 @@ mudate/
 │       ├── test_mercadolibre.py     # Diagnostic tests for MercadoLibre scraper
 │       ├── test_remax.py            # Diagnostic tests for Remax scraper
 │       ├── test_persistence.py      # Multi-engine persistence behavior
+│       ├── test_house_fields.py     # House publish-tracking field rules
+│       ├── test_same_engine_dedup.py # Reactivation detection & merge
 │       └── test_pagination_all.py   # Pagination verification for all engines
 │
 ├── frontend/
@@ -394,17 +398,70 @@ Marks a run as cancelled by setting status, message, and finished_at.
 #### `persist_listings(listings, session, username) → None`
 Merges a list of scraped listing dicts into the database in a single `atomic_update`. For each listing:
 - If a house with the same `search_engine_id` or URL already exists in **any** of the user's sessions, it is updated in-place (price history is appended if the price changed).
-- If it's new, a fresh house record is created.
+- If a house reappears after being marked `removed`, its `republish_count` is incremented (a detected re-post).
+- If it's new, a fresh house record is created (`first_published_at` from the portal date, else now; `republish_count = 0`).
 - Houses that were in the session previously but absent from the current scrape are marked as `status: "removed"`.
 - **Partial scrape safeguard:** If the scraper returned far fewer listings than the session previously had (likely Cloudflare block), removal is skipped to prevent mass data loss.
 
 #### `_merge(house, listing, now) → None`
-Updates a house record's mutable fields (price, images, specs, etc.) from a fresh listing dict without touching user-set fields (review, notes, manual_address, lat, lng).
+Updates a house record's mutable fields (price, images, specs, etc.) from a fresh listing dict without touching user-set fields (review, notes, manual_address, lat, lng) nor the publish-tracking fields. All field rules come from `house_fields.py`.
 
 ### Backend — `scrapers/factory.py`
 
 #### `get_scraper(engine: str) → BaseScraper`
 Returns the correct scraper instance for the given engine name (`"zonaprop"`, `"argenprop"`, `"mercadolibre"`, or `"remax"`). Raises `ValueError` for unknown engines.
+
+---
+
+### Backend — `house_fields.py`
+
+The **single source of truth** for every rule about a house record's mutable
+fields, its publication dates, and its re-post counter. No other module may
+re-implement these rules — they all import from here.
+
+Two persisted fields are owned exclusively by this module and are deliberately
+**not** part of `MUTABLE_LISTING_FIELDS`, so a scrape or merge can never
+overwrite them:
+
+- `first_published_at` — the *original* publication date (stable forever).
+- `republish_count` — how many times the listing was detected as re-published.
+
+`published_at` remains the *current* posting date and is refreshed on every scrape.
+
+#### `MUTABLE_LISTING_FIELDS` / `PUBLISH_FIELDS`
+`MUTABLE_LISTING_FIELDS` is the one field list copied from a scraped listing
+onto an existing house (`published_at` is included). `PUBLISH_FIELDS` lists the
+publish-tracking fields that are intentionally excluded from it.
+
+#### `original_published_at(house) → str | None`
+Returns the best-known original date: `first_published_at`, else `published_at`,
+else `created_at`, normalized to `YYYY-MM-DD`.
+
+#### `earliest_date(*dates) → str | None`
+Returns the earliest non-empty date (ISO `YYYY-MM-DD`).
+
+#### `advance_first_published(house, published_at) → None`
+Moves `first_published_at` *earlier* if `published_at` predates it; it never
+moves later, so re-scrapes and re-posts cannot overwrite the original date.
+
+#### `backfill_publish_fields(house) → None`
+Idempotently ensures `first_published_at` and `republish_count` exist. Used when
+a house is created and when migrating legacy records.
+
+#### `bump_republish(house, by=1) → None`
+Increments the re-post counter, initializing it when missing.
+
+#### `remember_price(house, new_price, now) → None`
+Appends the current price to `previous_prices` when `new_price` differs.
+
+#### `sync_mutable_fields(house, source) → None`
+Copies non-null `MUTABLE_LISTING_FIELDS` from `source` onto `house`. Never
+touches user-set fields (review, notes, manual_address, lat, lng) nor the
+publish-tracking fields.
+
+#### `migrate_publish_fields() → int`
+Backfills publish-tracking fields on every legacy house in `db.json`. Runs once
+at application startup (FastAPI lifespan); idempotent.
 
 ---
 
@@ -424,7 +481,7 @@ Marks duplicate houses as `review: "duplicado"` and merges their metadata (notes
 Detects reactivation duplicates: cases where a real estate agent deactivated a listing and re-created it as "new" to bump it to the top. Finds pairs of houses from the **same** search engine where one was removed and one was newly added, matching on address similarity, price tolerance, and square-meter tolerance. When `run_started_at` is provided, only considers houses changed during that specific scrape run.
 
 #### `apply_same_engine_dedup(session, username, groups) → int`
-Merges selected same-engine duplicate groups. For each group: updates the old house with the new house's mutable fields, records price changes in `previous_prices`, transfers the `search_engine_id`, and deletes the new house from the database. Returns the number of houses merged.
+Merges selected same-engine duplicate groups. For each group: updates the old house with the new house's mutable fields, records price changes in `previous_prices`, keeps the earliest original publication date (`first_published_at`) and counts the re-post (`republish_count`), transfers the `search_engine_id`, and deletes the new house from the database. Returns the number of houses merged.
 
 ---
 
@@ -671,11 +728,33 @@ python tests/test_remax.py
 
 ### `test_persistence.py` — Multi-engine persistence behavior
 
-Tests the persistence layer's behavior when scraping multiple engines in the same session: deduplication across engines, price history tracking, and the "removed" marking logic.
+Tests the persistence layer's behavior when scraping multiple engines in the same session: deduplication across engines, price history tracking, the "removed" marking logic, and re-post counting (`republish_count`) with a stable `first_published_at`.
 
 **Run:**
 ```bash
 python -m tests.test_persistence
+```
+
+---
+
+### `test_house_fields.py` — House publish-tracking field rules
+
+Unit tests for `house_fields.py`: earliest-date selection, original-date fallback, `advance_first_published` (never moves later), the "never overwrite publish fields" invariant, price history, and the idempotent startup migration.
+
+**Run:**
+```bash
+python -m tests.test_house_fields
+```
+
+---
+
+### `test_same_engine_dedup.py` — Reactivation detection & merge
+
+Tests `same_engine_dedup.py`: detecting removed+new pairs, the merge keeping the earliest original date, counting re-posts (`old + 1 + new`), transferring `search_engine_id`, and preserving a legacy original date.
+
+**Run:**
+```bash
+python -m tests.test_same_engine_dedup
 ```
 
 ---
@@ -706,4 +785,5 @@ python tests/test_pagination_all.py
 | MercadoLibre scraper not working | `test_mercadolibre.py` |
 | Remax scraper not working | `test_remax.py` |
 | Deduplication or price history issues | `test_persistence.py` |
+| Original date / re-post counter looks wrong | `test_house_fields.py`, `test_same_engine_dedup.py` |
 | Any engine's pagination broken | `test_pagination_all.py` |

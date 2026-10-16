@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from geocoding_tasks import run_geocode
+from house_fields import migrate_publish_fields
 from scheduler import get_scheduler_status, setup_scheduler
 from deduplicator import apply_dedup, find_duplicates
 from same_engine_dedup import apply_same_engine_dedup, find_same_engine_duplicates
@@ -54,6 +55,8 @@ runs: Dict[str, dict] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: startup and shutdown events."""
+    # Backfill publish-tracking fields on legacy houses (idempotent).
+    migrate_publish_fields()
     setup_scheduler(runs)
     yield
 
