@@ -75,7 +75,9 @@ async def run_scrape(
             user_hids.update(s.get("house_ids", []))
 
         # Run all sources sequentially
-        async def _scrape_one(source: dict) -> List[Dict[str, Any]]:
+        async def _scrape_one(
+            source: dict, progress_callback=progress
+        ) -> List[Dict[str, Any]]:
             engine = source["engine"]
             scraper = get_scraper(engine)
             existing_ids = {
@@ -87,7 +89,7 @@ async def run_scrape(
             }
             listings = await scraper.scrape_search(
                 search_filter=source["filter"],
-                progress_callback=progress,
+                progress_callback=progress_callback,
                 cancel_check=should_cancel,
                 existing_ids=existing_ids,
             )
@@ -113,11 +115,27 @@ async def run_scrape(
             if should_cancel():
                 break
             engine = source["engine"]
+            # With more than one search source, prefix every message with which
+            # source we are on so a per-source "Página X/Y" never looks like the
+            # whole run is finishing. Single-source runs keep the plain message.
+            prefix = (
+                f"[Fuente {i+1}/{len(sources)} · {engine}] "
+                if len(sources) > 1
+                else ""
+            )
+
+            def source_progress(msg: str, current: int, total: int, _p=prefix):
+                progress(_p + msg, current, total)
+
             progress(f"Scraping {engine} ({i+1}/{len(sources)})...", len(all_listings), len(all_listings))
             try:
-                listings = await _scrape_one(source)
+                listings = await _scrape_one(source, progress_callback=source_progress)
                 all_listings.extend(listings)
-                progress(f"{engine}: {len(listings)} propiedades", len(all_listings), len(all_listings))
+                progress(
+                    f"{prefix}{engine}: {len(listings)} propiedades",
+                    len(all_listings),
+                    len(all_listings),
+                )
             except ScrapeBlockedError as e:
                 # The portal refused us. `str(e)` already tells the user which
                 # profile directory to delete, so it must reach the run banner
