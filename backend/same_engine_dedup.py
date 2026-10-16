@@ -144,24 +144,29 @@ def find_same_engine_duplicates(
 
 
 def _summarize(h: dict) -> dict:
-    """Return a lightweight summary of a house for the API response."""
+    """Return a lightweight summary of a house for the API response.
+
+    Fields the response model declares as non-null strings/lists are coerced
+    with ``or`` so an explicit ``None`` in the database cannot fail response
+    validation.
+    """
     return {
-        "internal_id": h.get("internal_id", ""),
-        "search_engine": h.get("search_engine", ""),
-        "search_engine_id": h.get("search_engine_id", ""),
+        "internal_id": h.get("internal_id") or "",
+        "search_engine": h.get("search_engine") or "",
+        "search_engine_id": h.get("search_engine_id") or "",
         "address": h.get("manual_address") or h.get("address") or "",
         "price": h.get("price"),
-        "currency": h.get("currency", "USD"),
+        "currency": h.get("currency") or "USD",
         "total_m2": h.get("total_m2"),
         "covered_m2": h.get("covered_m2"),
         "review": h.get("review"),
-        "url": h.get("url", ""),
-        "images": h.get("images", []),
-        "description": h.get("description", ""),
+        "url": h.get("url") or "",
+        "images": h.get("images") or [],
+        "description": h.get("description") or "",
         "published_at": h.get("published_at"),
         "first_published_at": original_published_at(h),
         "created_at": h.get("created_at"),
-        "republish_count": h.get("republish_count", 0),
+        "republish_count": int(h.get("republish_count") or 0),
     }
 
 
