@@ -126,6 +126,36 @@ class TestSyncMutableFields(unittest.TestCase):
         for field in PUBLISH_FIELDS:
             self.assertNotIn(field, MUTABLE_LISTING_FIELDS)
 
+    def test_shorter_gallery_never_replaces_stored_one(self):
+        """Card thumbnails (ML: 1, Argenprop: ≤5) must not strip the gallery."""
+        gallery = [f"http://img/{i}.jpg" for i in range(5)]
+        h = {"images": list(gallery), "price": 100}
+        sync_mutable_fields(h, {"images": ["http://img/thumb.jpg"], "price": 120})
+        self.assertEqual(h["images"], gallery, "gallery was clobbered by a thumbnail")
+        self.assertEqual(h["price"], 120, "other fields must still sync")
+
+    def test_empty_source_gallery_cannot_wipe_stored(self):
+        h = {"images": ["http://img/1.jpg"]}
+        sync_mutable_fields(h, {"images": []})
+        self.assertEqual(h["images"], ["http://img/1.jpg"])
+
+    def test_longer_gallery_replaces_stored(self):
+        h = {"images": ["http://img/thumb.jpg"]}
+        fresh = [f"http://img/{i}.jpg" for i in range(5)]
+        sync_mutable_fields(h, {"images": fresh})
+        self.assertEqual(h["images"], fresh)
+
+    def test_equal_length_gallery_refreshes(self):
+        h = {"images": ["http://img/a.jpg", "http://img/b.jpg"]}
+        sync_mutable_fields(h, {"images": ["http://img/c.jpg", "http://img/d.jpg"]})
+        self.assertEqual(h["images"], ["http://img/c.jpg", "http://img/d.jpg"])
+
+    def test_missing_images_field_leaves_gallery_alone(self):
+        gallery = ["http://img/1.jpg", "http://img/2.jpg"]
+        h = {"images": gallery, "price": 1}
+        sync_mutable_fields(h, {"price": 2})
+        self.assertEqual(h["images"], gallery)
+
 
 class TestMigrate(unittest.TestCase):
     def setUp(self):

@@ -227,5 +227,119 @@ class TestDailyRunDoesNotClobberTotal(unittest.TestCase):
         self.assertEqual((house["total_m2"], house["covered_m2"]), (450.0, 132.0))
 
 
+class TestDailyRunDoesNotClobberImages(unittest.TestCase):
+    """The card thumbnail must never shrink a stored detail-page gallery."""
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w")
+        self.tmp.close()
+
+    def tearDown(self):
+        os.unlink(self.tmp.name)
+
+    def _session(self, engine):
+        return {
+            "id": "s1",
+            "search_sources": [{"engine": engine, "filter": "/casas/venta/"}],
+        }
+
+    def _write_db(self, houses: dict, house_ids: list):
+        db = {
+            "users": {"u": {"sessions": {"s1": {
+                "house_ids": house_ids,
+                "label": "", "created_at": "", "last_executed": None,
+                "search_sources": self._session("mercadolibre")["search_sources"],
+            }}}},
+            "houses": houses,
+        }
+        with open(self.tmp.name, "w", encoding="utf-8") as f:
+            json.dump(db, f)
+
+    def _read_db(self):
+        with open(self.tmp.name, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _known_house(self, engine, se_id, url, n_images):
+        return {
+            "search_engine": engine,
+            "search_engine_id": se_id,
+            "url": url,
+            "price": 400000.0, "currency": "USD",
+            "images": [f"http://img/{i}.jpg" for i in range(n_images)],
+            "status": "active", "last_updated": "2026-01-01T00:00:00",
+            "previous_prices": [],
+            "review": "Interesante", "notes": "keep me",
+        }
+
+    @patch("scrapers.persistence.atomic_update")
+    def test_ml_card_thumbnail_does_not_strip_gallery(self, mock_atomic):
+        """A daily run must keep the stored 5 images, not drop to the card's 1."""
+        mock_atomic.side_effect = lambda fn: _atomic_update_to(self.tmp.name, fn)
+
+        self._write_db({"h1": self._known_house(
+            "mercadolibre", "MLA-1", "https://casa.mercadolibre.com.ar/MLA-1-_JM", 5
+        )}, ["h1"])
+
+        # What scrape_search produces for a KNOWN listing: card values only —
+        # the single JSON-LD thumbnail, no detail page fetched.
+        card = {
+            "search_engine_id": "MLA-1",
+            "search_engine": "mercadolibre",
+            "url": "https://casa.mercadolibre.com.ar/MLA-1-_JM",
+            "price": 405000.0, "currency": "USD",
+            "type": "Casa", "address": "San Isidro",
+            "images": ["http://http2.mlstatic.com/D_thumb.jpg"],
+            "price_per_m2": 3068.18,
+        }
+        persist_listings([card], self._session("mercadolibre"), "u")
+
+        house = self._read_db()["houses"]["h1"]
+        self.assertEqual(len(house["images"]), 5, "gallery was stripped to the card thumbnail")
+        self.assertEqual(house["price"], 405000.0, "price should still be refreshed")
+        self.assertEqual(house["review"], "Interesante")
+        self.assertEqual(house["notes"], "keep me")
+
+    @patch("scrapers.persistence.atomic_update")
+    def test_argenprop_card_images_do_not_strip_gallery(self, mock_atomic):
+        """Same guard for Argenprop, whose card carries up to 5 images."""
+        mock_atomic.side_effect = lambda fn: _atomic_update_to(self.tmp.name, fn)
+
+        self._write_db({"h1": self._known_house(
+            "argenprop", "ap-1", "https://www.argenprop.com/casa-1", 8
+        )}, ["h1"])
+
+        card = {
+            "search_engine_id": "ap-1",
+            "search_engine": "argenprop",
+            "url": "https://www.argenprop.com/casa-1",
+            "price": 390000.0, "currency": "USD",
+            "images": [f"http://card/{i}.jpg" for i in range(5)],
+        }
+        persist_listings([card], self._session("argenprop"), "u")
+
+        house = self._read_db()["houses"]["h1"]
+        self.assertEqual(len(house["images"]), 8, "gallery was clobbered by card images")
+
+    @patch("scrapers.persistence.atomic_update")
+    def test_new_listing_still_stores_detail_gallery(self, mock_atomic):
+        """A new listing keeps the full gallery its detail page produced."""
+        mock_atomic.side_effect = lambda fn: _atomic_update_to(self.tmp.name, fn)
+
+        self._write_db({}, [])
+        gallery = [f"http://img/{i}.jpg" for i in range(5)]
+        card = {
+            "search_engine_id": "MLA-2",
+            "search_engine": "mercadolibre",
+            "url": "https://casa.mercadolibre.com.ar/MLA-2-_JM",
+            "price": 300000.0, "currency": "USD",
+            "images": ["http://http2.mlstatic.com/D_thumb.jpg"],
+        }
+        card.update({"images": gallery})  # detail merge on a new listing
+        persist_listings([card], self._session("mercadolibre"), "u")
+
+        house = next(iter(self._read_db()["houses"].values()))
+        self.assertEqual(house["images"], gallery)
+
+
 if __name__ == "__main__":
     unittest.main()

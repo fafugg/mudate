@@ -147,7 +147,7 @@ Deduplication: houses with same `search_engine_id` or URL across sessions are me
 3. **No auth** — just usernames for data separation (single-user/small-group friendly)
 4. **Optimistic UI** — review/notes saved optimistically and patched in background
 5. **Pipelined Nominatim rate limiter** — lock held only to claim send-time slot, released before HTTP call (~2x throughput)
-6. **Single source of truth for house fields** — `house_fields.py` owns every rule for mutable fields, publication dates and the re-post counter; no other module re-implements them
+6. **Single source of truth for house fields** — `house_fields.py` owns every rule for mutable fields, publication dates and the re-post counter; no other module re-implements them. Merging is shrink-proof for galleries: a search-card thumbnail (MercadoLibre: 1 image, Argenprop: ≤5) can never replace or wipe the detail-page images stored for a house
 
 ### Key Backend Files
 
@@ -161,7 +161,7 @@ Deduplication: houses with same `search_engine_id` or URL across sessions are me
 | `backend/main.py:255-294` | `POST /api/users/{username}/sessions/{id}/geocode` — batch geocoding launcher |
 | `backend/config.py:13-51` | `Settings` dataclass — all env vars and magic constants |
 | `backend/storage.py:36-48` | `atomic_update()` — write-to-temp-then-replace with filelock |
-| `backend/house_fields.py` | Single source of truth: `MUTABLE_LISTING_FIELDS`, `original_published_at()`, `advance_first_published()`, `bump_republish()`, `remember_price()`, `sync_mutable_fields()`, `migrate_publish_fields()` |
+| `backend/house_fields.py` | Single source of truth: `MUTABLE_LISTING_FIELDS`, `original_published_at()`, `advance_first_published()`, `bump_republish()`, `remember_price()`, `sync_mutable_fields()` (an image gallery is never replaced by a shorter one), `migrate_publish_fields()` |
 | `backend/scrapers/base.py:17-69` | `BaseScraper` ABC — `launch_browser()`, shared utils |
 | `backend/scrapers/runner.py:47-163` | `run_scrape()` — orchestrates multi-source scrape lifecycle |
 | `backend/scrapers/persistence.py` | `persist_listings()` — merges scraped data into db.json, deduplicates, marks removed, counts re-activations |

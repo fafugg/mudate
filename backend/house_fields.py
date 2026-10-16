@@ -104,12 +104,30 @@ def remember_price(house: Dict[str, Any], new_price: Optional[float], now: str) 
 def sync_mutable_fields(house: Dict[str, Any], source: Dict[str, Any]) -> None:
     """Copy non-null mutable listing fields from ``source`` onto ``house``.
 
+    ``images`` is the one field that never shrinks.  A search card only
+    carries a thumbnail (MercadoLibre: 1 image, Argenprop: up to 5) while the
+    house holds the gallery collected from its detail page — and known
+    listings skip the detail page entirely — so letting a shorter list
+    through would strip every gallery back to card size on the next daily
+    run.  An empty source list cannot wipe a populated gallery either; only a
+    gallery at least as long as the stored one replaces it (equal length
+    still refreshes, so replaced photos are picked up).
+
     Does not touch user-set fields (review, notes, manual_address, lat, lng)
     nor the publish-tracking fields.
     """
     for field in MUTABLE_LISTING_FIELDS:
-        if source.get(field) is not None:
-            house[field] = source[field]
+        value = source.get(field)
+        if value is None:
+            continue
+        if field == "images":
+            stored = house.get("images") or []
+            incoming = value or []
+            if stored and len(incoming) < len(stored):
+                continue
+            house[field] = incoming
+        else:
+            house[field] = value
 
 
 def migrate_publish_fields() -> int:
