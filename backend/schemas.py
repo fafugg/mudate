@@ -69,6 +69,9 @@ class HouseDict(TypedDict, total=False):
     created_at: str
     last_updated: str
     previous_prices: List[Dict[str, Any]]
+    # Publish tracking (owned by house_fields; never overwritten by a scrape)
+    first_published_at: Optional[str]
+    republish_count: int
 
 
 # ── Request Models ────────────────────────────────────────────────────────────
@@ -219,6 +222,10 @@ class SameEngineDedupHouseInfo(BaseModel):
     url: str = ""
     images: List[str] = []
     description: str = ""
+    published_at: Optional[str] = None
+    first_published_at: Optional[str] = None
+    created_at: Optional[str] = None
+    republish_count: int = 0
 
 
 class SameEngineDedupGroup(BaseModel):

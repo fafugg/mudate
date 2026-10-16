@@ -32,6 +32,7 @@ FastAPI (main.py)
   ├── geocoder.py          — Nominatim cascade → OpenCage fallback
   ├── geocoding_tasks.py   — concurrent geocode runner
   ├── storage.py           — atomic JSON read/write (filelock + temp+replace)
+  ├── house_fields.py      — single source of truth for house-field rules
   ├── config.py            — all env vars & constants
   └── schemas.py           — Pydantic request/response models
       ↕
@@ -45,6 +46,7 @@ mudate/
 ├── backend/
 │   ├── main.py            — FastAPI app, all routes, lifespan
 │   ├── storage.py         — read_db() & atomic_update()
+│   ├── house_fields.py    — single source of truth for house-field rules
 │   ├── geocoder.py        — Nominatim (pipelined rate limiter) → OpenCage
 │   ├── geocoding_tasks.py — async concurrency for batch geocoding
 │   ├── scheduler.py       — daily 08:00 ART auto-refresh
@@ -86,6 +88,7 @@ mudate/
 | **Cloudflare bypass** | Persistent browser profiles; separate profiles for headless vs headed runs |
 | **Block detection** | Zonaprop 403/challenge responses raise `ScrapeBlockedError`; the run banner then suggests deleting the poisoned browser profile |
 | **Price history** | Every price change recorded per property; % change shown in table |
+| **Publish tracking** | `first_published_at` (original post date, stable across re-posts/merges) + `republish_count`; "Antigüedad" column and detail-panel age in days |
 | **Geocoding** | Nominatim (pipelined rate limiter) → OpenCage fallback; manual address override |
 | **Interactive map** | Leaflet + OSM; color-coded pins by review status; fly-to on click; canvas rendering |
 | **Review system** | A revisar / En duda / Interesante / Descartada / Contactar / Duplicado |
@@ -104,7 +107,7 @@ mudate/
 Single JSON file (`db.json`) with `{ users, houses }`:
 
 - **users[username].sessions[id]** — search config + `house_ids[]`
-- **houses[id]** — canonical property record with: `search_engine_id`, `type`, `price`, `currency`, `address`, `lat/lng`, `images[]`, `previous_prices[]`, `review`, `notes`, `status` (active/removed), timestamps
+- **houses[id]** — canonical property record with: `search_engine_id`, `type`, `price`, `currency`, `address`, `lat/lng`, `images[]`, `previous_prices[]`, `review`, `notes`, `status` (active/removed), timestamps, `first_published_at` (original post date, owned by `house_fields.py`), `republish_count` (re-posts detected)
 
 Deduplication: houses with same `search_engine_id` or URL across sessions are merged (review/notes/geo preserved).
 
@@ -144,6 +147,7 @@ Deduplication: houses with same `search_engine_id` or URL across sessions are me
 3. **No auth** — just usernames for data separation (single-user/small-group friendly)
 4. **Optimistic UI** — review/notes saved optimistically and patched in background
 5. **Pipelined Nominatim rate limiter** — lock held only to claim send-time slot, released before HTTP call (~2x throughput)
+6. **Single source of truth for house fields** — `house_fields.py` owns every rule for mutable fields, publication dates and the re-post counter; no other module re-implements them
 
 ### Key Backend Files
 
@@ -157,9 +161,11 @@ Deduplication: houses with same `search_engine_id` or URL across sessions are me
 | `backend/main.py:255-294` | `POST /api/users/{username}/sessions/{id}/geocode` — batch geocoding launcher |
 | `backend/config.py:13-51` | `Settings` dataclass — all env vars and magic constants |
 | `backend/storage.py:36-48` | `atomic_update()` — write-to-temp-then-replace with filelock |
+| `backend/house_fields.py` | Single source of truth: `MUTABLE_LISTING_FIELDS`, `original_published_at()`, `advance_first_published()`, `bump_republish()`, `remember_price()`, `sync_mutable_fields()`, `migrate_publish_fields()` |
 | `backend/scrapers/base.py:17-69` | `BaseScraper` ABC — `launch_browser()`, shared utils |
 | `backend/scrapers/runner.py:47-163` | `run_scrape()` — orchestrates multi-source scrape lifecycle |
-| `backend/scrapers/persistence.py:13-114` | `persist_listings()` — merges scraped data into db.json, deduplicates, marks removed |
+| `backend/scrapers/persistence.py` | `persist_listings()` — merges scraped data into db.json, deduplicates, marks removed, counts re-activations |
+| `backend/same_engine_dedup.py` | `find_same_engine_duplicates()` / `apply_same_engine_dedup()` — reactivation detection & merge |
 | `backend/geocoder.py:207-242` | `geocode()` — Nominatim cascade → OpenCage fallback |
 | `backend/geocoder.py:158-179` | `_nominatim_rl()` — pipelined rate limiter |
 | `backend/geocoding_tasks.py:15-67` | `run_geocode()` — concurrent geocoding with Semaphore |
@@ -170,7 +176,9 @@ Deduplication: houses with same `search_engine_id` or URL across sessions are me
 |---|---|
 | `frontend/constants.js:2-8` | `REVIEW_OPTIONS` — dropdown options for review status |
 | `frontend/constants.js:54-66` | `api()` — fetch wrapper used by all frontend requests |
+| `frontend/constants.js` | `VISIBLE_COLUMNS_DEFAULTS` — table column defaults (merged with saved prefs) |
 | `frontend/app.js:1-1224` | `app()` — main Alpine component with all state & methods |
+| `frontend/app.js` | `originalPublishedAt()` / `houseAgeDays()` — single resolver for the original post date & age |
 | `frontend/app.js:74-76` | `isRunning` — computed property for run status |
 | `frontend/app.js:106-144` | `filteredHouses` — computed getter applying all filters + sort |
 | `frontend/app.js:345-353` | `setView()` — switches between table/map view |

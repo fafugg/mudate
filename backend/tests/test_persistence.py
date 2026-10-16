@@ -181,6 +181,92 @@ class TestMultiEnginePersistence(unittest.TestCase):
         self.assertEqual(house["price"], 110000, "price not updated")
         self.assertEqual(house["last_updated"], now, "timestamp not updated")
 
+    @patch("scrapers.persistence.atomic_update")
+    def test_reactivation_bumps_republish_and_keeps_original_date(self, mock_atomic):
+        """A removed house that reappears is counted and keeps its original date."""
+        mock_atomic.side_effect = lambda fn: _atomic_update_to(self.tmp.name, fn)
+
+        session = _make_session(
+            session_id="s1",
+            sources=[{"engine": "zonaprop", "filter": "/z1"}],
+        )
+        # Seed a session that already owns a removed house with an old original date.
+        with open(self.tmp.name, "r") as f:
+            db = json.load(f)
+        db["users"]["testuser"] = {"sessions": {"s1": {
+            "house_ids": ["hid-old"],
+            "label": "",
+            "created_at": "2023-01-01T00:00:00",
+            "last_executed": None,
+            "search_sources": [{"engine": "zonaprop", "filter": "/z1"}],
+        }}}
+        db["houses"]["hid-old"] = {
+            "internal_id": "hid-old",
+            "search_engine_id": "zp-1",
+            "search_engine": "zonaprop",
+            "url": "https://zp.com/1",
+            "price": 100000,
+            "currency": "USD",
+            "address": "Test Address",
+            "status": "removed",
+            "created_at": "2023-01-01T00:00:00",
+            "first_published_at": "2022-05-01",
+            "republish_count": 1,
+            "last_updated": "2023-06-01T00:00:00",
+            "previous_prices": [],
+        }
+        with open(self.tmp.name, "w") as f:
+            json.dump(db, f)
+
+        # The re-published listing carries a newer portal date.
+        listing = _make_listing("zp-1", "zonaprop", "https://zp.com/1", 105000)
+        listing["published_at"] = "2024-03-01"
+        persist_listings([listing], session, "testuser")
+
+        with open(self.tmp.name, "r") as f:
+            db = json.load(f)
+
+        house = db["houses"]["hid-old"]
+        self.assertEqual(house["status"], "active")
+        self.assertEqual(house["republish_count"], 2, "re-post must be counted")
+        self.assertEqual(house["first_published_at"], "2022-05-01", "original date must not change")
+        self.assertEqual(house["published_at"], "2024-03-01", "current date is updated")
+
+    @patch("scrapers.persistence.atomic_update")
+    def test_merge_keeps_old_original_when_first_published_missing(self, mock_atomic):
+        """A legacy house without first_published_at keeps its old published_at."""
+        mock_atomic.side_effect = lambda fn: _atomic_update_to(self.tmp.name, fn)
+
+        session = _make_session(
+            session_id="s1",
+            sources=[{"engine": "zonaprop", "filter": "/z1"}],
+        )
+        with open(self.tmp.name, "r") as f:
+            db = json.load(f)
+        db["users"]["testuser"] = {"sessions": {"s1": {
+            "house_ids": ["hid-old"], "label": "", "created_at": "2020-01-01T00:00:00",
+            "last_executed": None, "search_sources": [{"engine": "zonaprop", "filter": "/z1"}],
+        }}}
+        db["houses"]["hid-old"] = {
+            "internal_id": "hid-old", "search_engine_id": "zp-1", "search_engine": "zonaprop",
+            "url": "https://zp.com/1", "price": 100000, "currency": "USD",
+            "address": "Test Address", "status": "active",
+            "created_at": "2020-01-01T00:00:00", "published_at": "2020-02-01",
+            "last_updated": "2020-02-01T00:00:00", "previous_prices": [],
+        }
+        with open(self.tmp.name, "w") as f:
+            json.dump(db, f)
+
+        listing = _make_listing("zp-1", "zonaprop", "https://zp.com/1", 100000)
+        listing["published_at"] = "2024-03-01"
+        persist_listings([listing], session, "testuser")
+
+        with open(self.tmp.name, "r") as f:
+            db = json.load(f)
+        house = db["houses"]["hid-old"]
+        self.assertEqual(house["first_published_at"], "2020-02-01", "original date must survive")
+        self.assertEqual(house["published_at"], "2024-03-01", "current date is updated")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -561,7 +561,7 @@
           </button>
           <div x-show="columnsOpen" x-cloak
             class="absolute top-full right-0 mt-1 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg z-50 py-1">
-            <template x-for="[key, label] in [['status','Estado'],['review','Revisión'],['id','ID'],['provider','Provider'],['type','Tipo'],['address','Dirección'],['price','Precio'],['m2','$/m²'],['amb','Ambientes'],['dorm','Dormitorios'],['expenses','Expensas'],['realEstate','Inmobiliaria'],['published','Publicado'],['updated','Actualizado']]" :key="key">
+            <template x-for="[key, label] in [['status','Estado'],['review','Revisión'],['id','ID'],['provider','Provider'],['type','Tipo'],['address','Dirección'],['price','Precio'],['m2','$/m²'],['amb','Ambientes'],['dorm','Dormitorios'],['expenses','Expensas'],['realEstate','Inmobiliaria'],['age','Antigüedad'],['updated','Actualizado']]" :key="key">
               <label class="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
                 <input type="checkbox" :checked="visibleColumns[key]"
                   @change="visibleColumns[key] = $event.target.checked; localStorage.setItem('visibleColumns', JSON.stringify(visibleColumns))"
@@ -714,7 +714,7 @@
             <th x-show="visibleColumns.dorm" class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('dormitorios')">Dorm <span x-text="sortIndicator('dormitorios')"></span></th>
             <th x-show="visibleColumns.expenses" class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('expenses')">Expensas <span x-text="sortIndicator('expenses')"></span></th>
             <th x-show="visibleColumns.realEstate" class="px-3 py-2 text-left font-semibold text-slate-500">Inmobiliaria</th>
-            <th x-show="visibleColumns.published" class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('published_at')">Publicado <span x-text="sortIndicator('published_at')"></span></th>
+            <th x-show="visibleColumns.age" class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('first_published_at')" title="Fecha de publicación original (estable ante re-publicaciones)">Antigüedad <span x-text="sortIndicator('first_published_at')"></span></th>
             <th x-show="visibleColumns.updated" class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('last_updated')">Actualizado <span x-text="sortIndicator('last_updated')"></span></th>
           </tr>
         </thead>
@@ -781,12 +781,16 @@
               <td x-show="visibleColumns.dorm" class="px-3 py-2 text-right text-slate-600" x-text="h.dormitorios ?? '—'"></td>
               <td x-show="visibleColumns.expenses" class="px-3 py-2 text-right text-slate-500" x-text="h.expenses ? formatPrice(h.expenses, h.expenses_currency || 'ARS') : '—'"></td>
               <td x-show="visibleColumns.realEstate" class="px-3 py-2 text-slate-600 max-w-[120px] truncate" :title="h.real_estate" x-text="h.real_estate || '—'"></td>
-              <td x-show="visibleColumns.published" class="px-3 py-2 text-slate-400 whitespace-nowrap" x-text="formatDateOnly(h.published_at || h.created_at)"></td>
+              <td x-show="visibleColumns.age" class="px-3 py-2 text-slate-400 whitespace-nowrap" :title="formatDateOnly(originalPublishedAt(h))">
+                <span x-text="formatDateOnly(originalPublishedAt(h))"></span>
+                <span x-show="houseAgeDays(h) != null" class="text-slate-300" x-text="' · hace ' + houseAgeDays(h) + 'd'"></span>
+                <span x-show="h.republish_count > 0" class="ml-1 text-amber-500" :title="`${h.republish_count} re-publicación(es)`">🔁</span>
+              </td>
               <td x-show="visibleColumns.updated" class="px-3 py-2 text-slate-400 whitespace-nowrap" x-text="timeAgo(h.last_updated)"></td>
             </tr>
           </template>
           <tr x-show="filteredHouses.length === 0">
-            <td colspan="19" class="px-4 py-10 text-center">
+            <td colspan="20" class="px-4 py-10 text-center">
               <div x-show="houses.length === 0">
                 <div class="text-3xl mb-2">🔍</div>
                 <p class="text-slate-400 text-sm">No hay propiedades todavía.</p>
@@ -974,6 +978,9 @@
                 x-text="ENGINE_LABELS[detailHouse?.search_engine] || detailHouse?.search_engine"></span>
               <span x-show="detailHouse?.type" class="text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-medium"
                 x-text="detailHouse?.type"></span>
+              <span x-show="detailHouse?.republish_count > 0"
+                class="text-xs px-2 py-0.5 rounded-full bg-amber-400 text-amber-950 font-semibold"
+                x-text="`🔁 Re-publicado ×${detailHouse?.republish_count}`"></span>
             </div>
             <!-- Address display / inline edit -->
             <div class="flex items-start gap-2 group/addr">
@@ -1071,13 +1078,22 @@
           <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
             <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">📅 Fechas</div>
             <div class="space-y-1.5 text-xs">
+              <div x-show="originalDiffersFromPublished(detailHouse)" class="flex justify-between gap-2">
+                <span class="text-slate-400">Publicado originalmente</span>
+                <span class="text-slate-700 font-medium" x-text="formatDateOnly(originalPublishedAt(detailHouse))"></span>
+              </div>
+              <div class="flex justify-between gap-2">
+                <span class="text-slate-400">Antigüedad</span>
+                <span class="text-slate-700 font-medium"
+                  x-text="houseAgeDays(detailHouse) != null ? houseAgeDays(detailHouse) + ' días' : '—'"></span>
+              </div>
+              <div x-show="detailHouse?.republish_count > 0" class="flex justify-between gap-2">
+                <span class="text-slate-400">Re-publicaciones</span>
+                <span class="text-amber-600 font-semibold" x-text="`🔁 ×${detailHouse?.republish_count}`"></span>
+              </div>
               <div x-show="detailHouse?.published_at" class="flex justify-between gap-2">
                 <span class="text-slate-400">Publicado</span>
                 <span class="text-slate-700 font-medium" x-text="formatDateOnly(detailHouse?.published_at)"></span>
-              </div>
-              <div class="flex justify-between gap-2">
-                <span class="text-slate-400">1ra vez visto</span>
-                <span class="text-slate-700 font-medium" x-text="formatDateOnly(detailHouse?.created_at)"></span>
               </div>
               <div class="flex justify-between gap-2">
                 <span class="text-slate-400">Actualizado</span>
@@ -1737,6 +1753,8 @@
                 <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5" x-text="formatPrice(group.old_house.price, group.old_house.currency)"></div>
                 <div class="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5" x-show="group.old_house.total_m2 || group.old_house.covered_m2"
                   x-text="`${group.old_house.total_m2 || group.old_house.covered_m2} m²`"></div>
+                <div class="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5" x-show="group.old_house.first_published_at"
+                  x-text="'Publicado orig. ' + formatDateOnly(group.old_house.first_published_at)"></div>
                 <div class="mt-1">
                   <span class="px-1.5 py-0.5 rounded text-[10px] font-medium"
                     :class="reviewClass(group.old_house.review)"
@@ -1769,6 +1787,8 @@
                 <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5" x-text="formatPrice(group.new_house.price, group.new_house.currency)"></div>
                 <div class="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5" x-show="group.new_house.total_m2 || group.new_house.covered_m2"
                   x-text="`${group.new_house.total_m2 || group.new_house.covered_m2} m²`"></div>
+                <div class="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5" x-show="group.new_house.first_published_at"
+                  x-text="'Publicado orig. ' + formatDateOnly(group.new_house.first_published_at)"></div>
               </div>
             </div>
             <!-- Expand/collapse chevron -->

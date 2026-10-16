@@ -8,6 +8,13 @@ import logging
 import uuid
 from typing import Any, Dict, List
 
+from house_fields import (
+    advance_first_published,
+    backfill_publish_fields,
+    bump_republish,
+    remember_price,
+    sync_mutable_fields,
+)
 from storage import atomic_update, _now
 
 logger = logging.getLogger(__name__)
@@ -76,16 +83,12 @@ def persist_listings(
 
             if hid:
                 house = db["houses"][hid]
-                new_price = listing.get("price")
-                if new_price and new_price != house.get("price"):
-                    house.setdefault("previous_prices", []).append(
-                        {
-                            "price": house.get("price"),
-                            "currency": house.get("currency", "USD"),
-                            "timestamp": house.get("last_updated", now),
-                        }
-                    )
+                # A house that reappears after being marked removed was
+                # re-published by the agent → count it.
+                was_removed = house.get("status") == "removed"
                 _merge(house, listing, now)
+                if was_removed:
+                    bump_republish(house)
                 house["status"] = "active"
                 house["removed_at"] = None
                 matched_hids.add(hid)
@@ -141,29 +144,23 @@ def persist_listings(
     atomic_update(update)
 
 
-HOUSE_FIELDS = [
-    "type", "ambientes", "dormitorios", "banos", "toilettes", "price", "currency",
-    "price_per_m2", "expenses", "expenses_currency", "address",
-    "covered_m2", "total_m2", "floor", "parking", "amenities",
-    "orientation", "age_years", "condition", "real_estate", "real_estate_phone",
-    "published_at", "images", "description",
-]
-
-
 def _merge(house: dict, listing: dict, now: str) -> None:
     """Update a house record's mutable fields from a fresh listing.
 
-    Does NOT touch user-set fields: review, notes, manual_address, lat, lng.
+    Does NOT touch user-set fields (review, notes, manual_address, lat, lng)
+    nor the publish-tracking fields (first_published_at, republish_count).
     """
-    for field in HOUSE_FIELDS:
-        if listing.get(field) is not None:
-            house[field] = listing[field]
+    remember_price(house, listing.get("price"), now)
+    # Advance the original date while the house still holds its own values;
+    # sync_mutable_fields() below overwrites ``published_at`` with the new one.
+    advance_first_published(house, listing.get("published_at"))
+    sync_mutable_fields(house, listing)
     house["last_updated"] = now
 
 
 def _new_house(hid: str, listing: dict, session_id: str, engine: str, now: str) -> dict:
     """Create a new house record from a scraped listing."""
-    return {
+    house = {
         "internal_id": hid,
         "search_engine_id": listing.get("search_engine_id"),
         "search_engine": engine,
@@ -205,3 +202,6 @@ def _new_house(hid: str, listing: dict, session_id: str, engine: str, now: str) 
         "lng": listing.get("lng"),
         "geocode_failed": False,
     }
+    # Sets first_published_at (portal date, else now) and republish_count = 0.
+    backfill_publish_fields(house)
+    return house

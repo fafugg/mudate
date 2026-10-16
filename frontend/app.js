@@ -55,11 +55,7 @@ function app() {
     editLabel: '',
     selectedHouses: [],
     compareHouses: [],
-    visibleColumns: JSON.parse(localStorage.getItem('visibleColumns') || 'null') || {
-      status: true, review: true, info: true, link: true, id: true, provider: true, type: true,
-      address: true, price: true, m2: true, amb: true, dorm: true, expenses: true,
-      realEstate: true, published: true, updated: true,
-    },
+    visibleColumns: { ...VISIBLE_COLUMNS_DEFAULTS, ...(JSON.parse(localStorage.getItem('visibleColumns') || 'null') || {}) },
     darkMode: false,
     actionsOpen: false,
     sessionsActionsOpen: false,
@@ -159,7 +155,10 @@ function app() {
         list = list.filter(h => this.filterProvider.includes(h.search_engine));
       }
       list.sort((a, b) => {
-        let av = a[this.sortBy], bv = b[this.sortBy];
+        const resolve = h => this.sortBy === 'first_published_at'
+          ? this.originalPublishedAt(h)
+          : h[this.sortBy];
+        let av = resolve(a), bv = resolve(b);
         if (av == null) av = this.sortDir === 'asc' ? Infinity : -Infinity;
         if (bv == null) bv = this.sortDir === 'asc' ? Infinity : -Infinity;
         if (typeof av === 'string') av = av.toLowerCase();
@@ -1087,7 +1086,8 @@ function app() {
         'price', 'currency', 'price_per_m2', 'expenses', 'expenses_currency',
         'address', 'manual_address', 'covered_m2', 'total_m2', 'floor', 'parking',
         'orientation', 'age_years', 'condition', 'real_estate',
-        'amenities', 'description', 'url', 'status', 'review', 'notes', 'last_updated', 'created_at',
+        'amenities', 'description', 'url', 'status', 'review', 'notes',
+        'first_published_at', 'republish_count', 'last_updated', 'created_at',
       ];
       const escape = v => {
         if (v == null) return '';
@@ -1098,7 +1098,9 @@ function app() {
       };
       const rows = [FIELDS.join(',')];
       for (const h of this.filteredHouses) {
-        rows.push(FIELDS.map(f => escape(h[f])).join(','));
+        rows.push(FIELDS.map(f => escape(
+          f === 'first_published_at' ? this.originalPublishedAt(h) : h[f]
+        )).join(','));
       }
       const blob = new Blob(['\ufeff' + rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
@@ -1185,6 +1187,35 @@ function app() {
       return new Date(iso).toLocaleDateString('es-AR', {
         day: '2-digit', month: '2-digit', year: 'numeric',
       });
+    },
+
+    // Original publication date: stable across re-scrapes and merges.
+    // Single resolver used by the table, the detail modal and the CSV export.
+    originalPublishedAt(h) {
+      if (!h) return null;
+      return h.first_published_at || h.published_at || h.created_at || null;
+    },
+
+    // Days since the property was originally posted (null when unknown).
+    houseAgeDays(h) {
+      const iso = this.originalPublishedAt(h);
+      if (!iso) return null;
+      const ms = Date.now() - new Date(iso).getTime();
+      if (isNaN(ms)) return null;
+      return Math.max(0, Math.floor(ms / 86400000));
+    },
+
+    // True when the original post date differs (at day granularity) from the
+    // current post date, so the detail panel only shows both when meaningful.
+    originalDiffersFromPublished(h) {
+      if (!h) return false;
+      return this.dateOnlyKey(this.originalPublishedAt(h)) !== this.dateOnlyKey(h.published_at);
+    },
+
+    // Date key (YYYY-MM-DD) mirroring the backend's date_only(); timezone-safe.
+    dateOnlyKey(iso) {
+      if (!iso) return '';
+      return String(iso).slice(0, 10);
     },
 
     timeAgo(iso) {
