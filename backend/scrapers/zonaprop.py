@@ -431,6 +431,10 @@ async def _collect_all_pages(
 
     current_page = 1
     prev_card_ids: set = set()
+    # After a blocked direct navigation, skip URL attempts entirely: Zonaprop
+    # challenges deep pagination URLs (pagina-10+) while still serving those
+    # pages through its own SPA pager, so the click path is the reliable one.
+    click_only = False
     while current_page <= total_pages:
         if cancel_check and cancel_check():
             break
@@ -468,28 +472,63 @@ async def _collect_all_pages(
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         await asyncio.sleep(0.5)
 
-        # ── Navigate to next page: URL first (reliable), click as fallback ───
+        # ── Navigate to next page: URL first, SPA pager as fallback ──────────
+        # Zonaprop now answers HTTP 403 (challenge) to DIRECT requests for deep
+        # pagination URLs — verified live: pagina-10+ 403s deterministically —
+        # while still serving those exact pages through its own pager, which
+        # fetches via XHR. A blocked direct navigation is therefore recoverable:
+        # reload the last good page and click through. Only when the recovery
+        # also fails do we escalate — a genuine block must never be hidden
+        # behind a silently truncated run.
         navigated = False
+        block_reason: Optional[str] = None
 
-        # Attempt 1: direct URL navigation (most reliable in headless mode)
-        next_url = f"{BASE_URL}{search_filter}-pagina-{next_page}.html"
-        try:
-            nav_resp = await page.goto(
-                next_url, wait_until="domcontentloaded", timeout=30000
-            )
-            await asyncio.sleep(2)
-            await _raise_if_blocked(page, nav_resp)
-            if nav_resp and nav_resp.status == 200:
-                navigated = True
-        except ScrapeBlockedError:
-            # Never swallow a block: falling through to the click fallback would
-            # just hide it and end the run with zero results and no explanation.
-            raise
-        except Exception:
-            pass
+        if not click_only:
+            # Attempt 1: direct URL navigation (most reliable in headless mode)
+            next_url = f"{BASE_URL}{search_filter}-pagina-{next_page}.html"
+            try:
+                nav_resp = await page.goto(
+                    next_url, wait_until="domcontentloaded", timeout=30000
+                )
+                await asyncio.sleep(2)
+                blocked, reason = await _detect_block(page, nav_resp)
+                if blocked:
+                    # Not fatal yet — the SPA pager below may still work.
+                    block_reason = reason
+                    click_only = True
+                    logger.warning(
+                        "ZP direct navigation to page %d blocked (%s) — "
+                        "recovering via the SPA pager", next_page, reason,
+                    )
+                elif nav_resp and nav_resp.status == 200:
+                    navigated = True
+            except Exception:
+                pass
 
         # Attempt 2: click the pagination element via data-qa attribute
         if not navigated:
+            if block_reason:
+                # The blocked navigation replaced the DOM with a challenge page,
+                # which has no pager: reload the last good page first. (Verified
+                # live: pages 1-9 still load right after a deep-page challenge,
+                # so the profile itself is not banned.)
+                prev_url = (
+                    f"{BASE_URL}{search_filter}"
+                    if current_page == 1
+                    else f"{BASE_URL}{search_filter}-pagina-{current_page}.html"
+                )
+                prev_resp = None
+                try:
+                    prev_resp = await page.goto(
+                        prev_url, wait_until="domcontentloaded", timeout=30000
+                    )
+                    await asyncio.sleep(2)
+                except Exception:
+                    pass
+                still_blocked, still_reason = await _detect_block(page, prev_resp)
+                if still_blocked:
+                    raise _blocked_error(still_reason)
+
             clicked = await page.evaluate(f"""() => {{
                 const el = document.querySelector('[data-qa="PAGING_{next_page}"]');
                 if (el) {{ el.click(); return true; }}
@@ -503,6 +542,11 @@ async def _collect_all_pages(
                         break
 
         if not navigated:
+            if block_reason:
+                # The pager could not recover from the blocked page — a genuine
+                # block, not a pagination dead end. Surface it instead of
+                # silently truncating the run.
+                raise _blocked_error(block_reason)
             logger.warning(
                 "ZP pagination failed at page %d — stopping", next_page
             )

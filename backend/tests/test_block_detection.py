@@ -9,6 +9,9 @@ because the detection logic is factored out of the page navigation:
     _scrape_detail()          detail pages raise instead of returning {} silently
     _is_usable_detail()       whether an extraction is worth confirming
     _should_abort_on_detail_blocks()  whether a run's blocks are systemic
+    _collect_all_pages()      blocked deep-page navigations recover via the SPA
+                              pager (live: pagina-10+ answers 403 to direct
+                              requests while the site's own pager still works)
 
 The marker sets were cross-checked against a live Zonaprop results page: a
 healthy page is never flagged, because it is recognised as a results page
@@ -23,6 +26,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 import sys
 import types
 import unittest
@@ -36,6 +40,7 @@ from scrapers.zonaprop import (
     _DETECT_SCRIPT,
     _PROFILE_DIR,
     _blocked_error,
+    _collect_all_pages,
     _detect_block,
     _is_usable_detail,
     _looks_like_challenge,
@@ -604,6 +609,205 @@ class TestDetailBlockEscalation(unittest.TestCase):
         # The finally must run for every blocked card — one leaked tab per
         # block would exhaust the browser on a long run.
         self.assertEqual(opened[0].tabs_closed, 3)
+
+
+class _FakePagerPage:
+    """A results page with SPA pagination, modelling what was observed live.
+
+    Direct navigation to deep pagination URLs (page >= ``block_from_page``)
+    answers 403 and REPLACES the DOM with a challenge interstitial (no pager,
+    no cards, title "Un momento…"), while the SPA pager — a click on
+    ``[data-qa="PAGING_N"]`` — keeps serving those same pages through XHR.
+    Once a block happened, ``ban_after_block`` simulates a genuinely banned
+    profile (every further document request 403s, including the recovery
+    reload of the previous page).
+    """
+
+    FILTER = "-venta.html"
+    BASE = "https://www.zonaprop.com.ar"
+
+    def __init__(self, total_pages=4, block_from_page=None, *,
+                 click_works=True, ban_after_block=False, goto_error=None):
+        self.total_pages = total_pages
+        self.block_from_page = block_from_page
+        self.click_works = click_works
+        self.ban_after_block = ban_after_block
+        self.goto_error = goto_error  # predicate(url) -> True → timeout
+        self.page_no = 1          # SPA "current page" of the healthy DOM
+        self.on_challenge = False  # DOM currently replaced by the interstitial
+        self.blocked_once = False
+        self.goto_urls: list = []
+        self.clicks: list = []
+
+    @property
+    def url(self) -> str:
+        if self.on_challenge:
+            return f"{self.BASE}/un-momento"
+        if self.page_no == 1:
+            return f"{self.BASE}{self.FILTER}"
+        return f"{self.BASE}{self.FILTER}-pagina-{self.page_no}.html"
+
+    def _ids(self) -> list:
+        return [f"{self.page_no}-{i}" for i in range(5)]
+
+    def _cards(self) -> list:
+        return [
+            {"id": cid, "urlPath": f"/propiedad-{cid}.html", "priceText": "U$S 150.000"}
+            for cid in self._ids()
+        ]
+
+    async def goto(self, url, **_kwargs):
+        self.goto_urls.append(url)
+        if self.goto_error and self.goto_error(url):
+            raise RuntimeError("Timeout 30000ms exceeded")
+        m = re.search(r"pagina-(\d+)", url)
+        page_no = int(m.group(1)) if m else 1
+        challenged = (
+            (self.block_from_page is not None and page_no >= self.block_from_page)
+            or (self.ban_after_block and self.blocked_once)
+        )
+        if challenged:
+            self.on_challenge = True
+            self.blocked_once = True
+            return _resp(403)
+        self.on_challenge = False
+        self.page_no = page_no
+        return _resp(200)
+
+    async def evaluate(self, script):
+        if "PAGING_" in script:
+            if self.on_challenge or not self.click_works:
+                return False
+            m = re.search(r"PAGING_(\d+)", script)
+            target = int(m.group(1))
+            if target > self.total_pages:
+                return False
+            self.page_no = target
+            self.clicks.append(target)
+            return True
+        if "listPostings" in script:  # _extract_paging_info
+            return {
+                "total": 30 * self.total_pages,
+                "totalPages": self.total_pages,
+                "currentPage": self.page_no,
+                "limit": 30,
+            }
+        if "hasBootstrap" in script:  # _DETECT_SCRIPT
+            return {
+                "title": "Un momento…" if self.on_challenge else
+                         "5 Casas en venta - Zonaprop",
+                "text": "Verifying you are human" if self.on_challenge else "",
+                "hasBootstrap": False,
+                "isResults": not self.on_challenge,
+            }
+        if "urlPath" in script:  # card extraction (_extract_cards_js)
+            return [] if self.on_challenge else self._cards()
+        if "data-id" in script:  # card-id wait after pagination
+            return [] if self.on_challenge else self._ids()
+        return None  # scroll etc.
+
+    async def wait_for_selector(self, *_args, **_kwargs):
+        return None
+
+    async def title(self):
+        return f"{30 * self.total_pages} Casas en venta - Zonaprop"
+
+
+async def _fast_sleep(_seconds):
+    """No-op asyncio.sleep so pagination tests run in milliseconds."""
+
+
+class TestPaginationBlockRecovery(unittest.TestCase):
+    """Blocked deep-page navigations must be recovered via the SPA pager.
+
+    Observed live on the 340k-420k jardín session: direct requests to
+    ``pagina-10`` answer a deterministic 403 challenge while the page is still
+    reachable through the site's own pager. Before this recovery existed, the
+    403 raised ScrapeBlockedError and killed the whole Zonaprop source
+    (0 listings), which is why the session only ever got its
+    MercadoLibre results.
+    """
+
+    def _run(self, page):
+        with patch("asyncio.sleep", _fast_sleep):
+            return asyncio.run(
+                _collect_all_pages(page, _FakePagerPage.FILTER, None, None)
+            )
+
+    def test_blocked_page_is_recovered_via_click_and_run_continues(self):
+        # Pages 1-2 via direct URL, pages 3-4 via the SPA pager after the
+        # blocked navigation to pagina-3.
+        page = _FakePagerPage(total_pages=4, block_from_page=3)
+        raw, paging = self._run(page)
+        self.assertEqual(len(raw), 20)  # 5 cards x 4 pages, none lost
+        self.assertEqual(paging["totalPages"], 4)
+        # The recovery reloaded the last good page (a second visit to
+        # pagina-2) after the blocked attempt at pagina-3.
+        self.assertEqual(page.goto_urls, [
+            f"{_FakePagerPage.BASE}{_FakePagerPage.FILTER}",
+            f"{_FakePagerPage.BASE}{_FakePagerPage.FILTER}-pagina-2.html",
+            f"{_FakePagerPage.BASE}{_FakePagerPage.FILTER}-pagina-3.html",  # 403
+            f"{_FakePagerPage.BASE}{_FakePagerPage.FILTER}-pagina-2.html",  # reload
+        ])
+        self.assertEqual(page.clicks, [3, 4])
+
+    def test_direct_navigation_stops_after_first_block(self):
+        # Once a deep URL was challenged, every further page goes straight
+        # through the pager — no doomed direct request per page.
+        page = _FakePagerPage(total_pages=6, block_from_page=3)
+        self._run(page)
+        deep_gotos = [u for u in page.goto_urls if "pagina-3.html" in u]
+        self.assertEqual(len(deep_gotos), 1)  # only the one blocked attempt
+        self.assertEqual(page.clicks, [3, 4, 5, 6])
+
+    def test_banned_profile_still_raises_with_reset_hint(self):
+        # The reload of the previous page is blocked too → genuinely banned,
+        # so the block must surface with the actionable profile-reset hint.
+        page = _FakePagerPage(total_pages=4, block_from_page=3, ban_after_block=True)
+        with self.assertLogs(level="WARNING"):
+            with self.assertRaises(ScrapeBlockedError) as ctx:
+                self._run(page)
+        self.assertIn("HTTP 403", str(ctx.exception))
+        self.assertIn(f"rm -rf {_PROFILE_DIR}", str(ctx.exception))
+
+    def test_pager_failure_after_block_raises_instead_of_hiding_it(self):
+        # Recovery reload succeeds but the pager element is gone: the block
+        # (not a pagination dead end) is what ended the run, so raise.
+        page = _FakePagerPage(
+            total_pages=4, block_from_page=3, click_works=False
+        )
+        with self.assertRaises(ScrapeBlockedError) as ctx:
+            self._run(page)
+        self.assertIn("HTTP 403", str(ctx.exception))
+
+    def test_nav_timeout_without_block_falls_back_to_click(self):
+        # A plain timeout on the direct URL (no block involved) keeps the old
+        # behaviour: recover via the pager and finish the run.
+        page = _FakePagerPage(
+            total_pages=3,
+            goto_error=lambda url: "pagina-" in url,
+        )
+        raw, _ = self._run(page)
+        self.assertEqual(len(raw), 15)
+        self.assertEqual(page.clicks, [2, 3])
+
+    def test_dead_end_without_block_stops_gracefully(self):
+        # Direct navigation fails (timeouts) and there is no pager element,
+        # but no block was detected → the old contract: keep what we have.
+        page = _FakePagerPage(
+            total_pages=4,
+            goto_error=lambda url: "pagina-" in url,
+            click_works=False,
+        )
+        raw, _ = self._run(page)
+        self.assertEqual(len(raw), 5)  # only page 1 was collected
+        self.assertEqual(page.clicks, [])
+
+    def test_initial_page_block_still_raises(self):
+        # Page 1 has no pager to recover from: a block there stays fatal.
+        page = _FakePagerPage(total_pages=2, block_from_page=1)
+        with self.assertRaises(ScrapeBlockedError):
+            self._run(page)
 
 
 if __name__ == "__main__":
