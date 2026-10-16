@@ -6,7 +6,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from same_engine_dedup import apply_same_engine_dedup, find_same_engine_duplicates
+from same_engine_dedup import _summarize, apply_same_engine_dedup, find_same_engine_duplicates
+from schemas import SameEngineDedupHouseInfo, SameEngineDedupPreviewResponse
 
 
 def _house(hid, *, status, url, price=100000, m2=50, created_at="2023-01-01T00:00:00",
@@ -55,6 +56,45 @@ class TestFindDuplicates(unittest.TestCase):
         self.assertEqual(groups[0]["old_house"]["first_published_at"], "2022-05-01")
         # New house has no first_published_at → falls back to its published_at.
         self.assertEqual(groups[0]["new_house"]["first_published_at"], "2024-03-01")
+
+
+class TestSummarizeNoneFields(unittest.TestCase):
+    """Regression: houses with explicit None in nullable fields must not break
+    response validation (the /same-engine-dedup/preview endpoint used to 500)."""
+
+    def _house_with_nones(self, hid, status, address="Av. Corrientes 1234",
+                          price=100000, m2=50):
+        return {
+            "internal_id": hid, "search_engine_id": hid, "search_engine": "zonaprop",
+            "url": None, "address": address, "manual_address": None, "price": price,
+            "currency": None, "total_m2": m2, "covered_m2": m2, "review": None,
+            "images": None, "description": None, "published_at": None,
+            "first_published_at": None, "created_at": None, "republish_count": None,
+            "status": status, "last_updated": None, "previous_prices": [],
+        }
+
+    def test_summarize_coerces_none_for_non_optional_fields(self):
+        summary = _summarize(self._house_with_nones("a", "removed", address=None))
+        model = SameEngineDedupHouseInfo(**summary)  # must not raise
+        self.assertEqual(model.description, "")
+        self.assertEqual(model.url, "")
+        self.assertEqual(model.images, [])
+        self.assertEqual(model.currency, "USD")
+        self.assertEqual(model.address, "")
+        self.assertEqual(model.internal_id, "a")
+        self.assertEqual(model.republish_count, 0)
+
+    def test_preview_response_validates_with_none_fields(self):
+        session = {"id": "s1", "house_ids": ["old", "new"]}
+        db = {"users": {}, "houses": {
+            "old": self._house_with_nones("old", "removed"),
+            "new": self._house_with_nones("new", "active"),
+        }}
+        with patch("same_engine_dedup.read_db", return_value=db):
+            groups = find_same_engine_duplicates(session, "u")
+        self.assertTrue(groups, "the two houses should be detected as a reactivation")
+        # This is exactly what the endpoint returns; it must validate.
+        SameEngineDedupPreviewResponse(groups=groups)
 
 
 class TestApplyMerge(unittest.TestCase):
