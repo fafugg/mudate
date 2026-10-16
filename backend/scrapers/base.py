@@ -31,6 +31,54 @@ class ScrapeBlockedError(Exception):
         self.message = message
 
 
+# HTTP statuses that mean "the portal is refusing us". Used by the engines
+# whose block handling is status-based (Argenprop, Remax); Zonaprop keeps its
+# own wider set next to its profile-recovery logic.
+BLOCK_STATUSES = {403, 429, 503}
+
+# Cloudflare challenge bootstrap, matched against the markup. It is written
+# only while a challenge is being served, so a healthy page — including one
+# with an interactive Turnstile widget — never carries it (verified live;
+# the same set Zonaprop matches, which additionally checks rendered text).
+CHALLENGE_MARKUP_MARKERS = ("_cf_chl_opt", "cf-browser-verification")
+
+
+def engine_blocked_error(engine: str, reason: str) -> ScrapeBlockedError:
+    """User-facing block message (Spanish, shown in the run banner).
+
+    Argenprop and Remax get refused with Cloudflare-style interstitials but
+    use no persistent browser profile, so the hint points at retrying later,
+    not at profile poisoning — that hint belongs to Zonaprop's own error.
+    """
+    return ScrapeBlockedError(
+        f"{engine} bloqueado ({reason}). El portal dejó de respondernos "
+        f"(probablemente rate-limit o un desafío de Cloudflare). Se omitió "
+        f"esta fuente; el resto de la sesión siguió y el próximo run la "
+        f"reintenta."
+    )
+
+
+async def challenge_marker_in_page(page) -> Optional[str]:
+    """Return the Cloudflare challenge marker present in the page markup, or None.
+
+    The marker list is injected into the page so matching happens there and
+    only a short answer travels back. Never raises: an inspection failure is
+    reported as "no marker", so the check can never abort a healthy scrape
+    (same contract as Zonaprop's detector).
+    """
+    try:
+        return await page.evaluate(
+            """(markers) => {
+                const html = document.documentElement ? document.documentElement.innerHTML : '';
+                for (const m of markers) { if (html.includes(m)) return m; }
+                return null;
+            }""",
+            list(CHALLENGE_MARKUP_MARKERS),
+        )
+    except Exception:
+        return None
+
+
 class BaseScraper(ABC):
     """Clase base para scrapers de portales inmobiliarios.
 

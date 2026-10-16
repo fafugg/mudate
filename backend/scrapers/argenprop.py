@@ -3,7 +3,15 @@ import logging
 import re
 from typing import Any, Callable, Dict, List, Optional, Set
 
-from .base import BaseScraper, UA, coerce_float, coerce_int
+from .base import (
+    BLOCK_STATUSES,
+    BaseScraper,
+    UA,
+    challenge_marker_in_page,
+    coerce_float,
+    coerce_int,
+    engine_blocked_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +60,26 @@ class ArgenpropScraper(BaseScraper):
                 resp = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 await asyncio.sleep(2)
 
-                if resp and resp.status == 403:
-                    logger.warning("Argenprop returned 403 on %s", url)
+                # A refused navigation (or a served challenge) with nothing
+                # collected yet means the whole source is blocked — raise so the
+                # run banner says so instead of reporting "Listo" with zero or
+                # page-1-only listings. Mid-pagination the partial cards are
+                # still worth keeping: the 50%-safeguard skips removals and the
+                # next run finishes the rest (the Zonaprop deep-page lesson).
+                status = resp.status if resp else None
+                if status in BLOCK_STATUSES:
+                    if not all_raw_cards:
+                        raise engine_blocked_error("Argenprop", f"HTTP {status}")
+                    logger.warning("Argenprop returned %s mid-pagination on %s", status, url)
+                    break
+
+                marker = await challenge_marker_in_page(page)
+                if marker:
+                    if not all_raw_cards:
+                        raise engine_blocked_error(
+                            "Argenprop", f"desafío de Cloudflare ({marker})"
+                        )
+                    logger.warning("Argenprop served a challenge mid-pagination on %s", url)
                     break
 
                 # Accept cookies if present
