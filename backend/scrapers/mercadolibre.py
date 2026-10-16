@@ -4,6 +4,9 @@ import logging
 import re
 from typing import Any, Callable, Dict, List, Optional, Set
 
+import httpx
+from bs4 import BeautifulSoup
+
 from .base import BaseScraper, UA, coerce_float, coerce_int
 
 logger = logging.getLogger(__name__)
@@ -345,7 +348,15 @@ def _parse_json_ld_listing(item: dict) -> Optional[Dict[str, Any]]:
         address = ", ".join(filter(None, [locality, region]))
 
         floor_size = item.get("floorSize", {})
-        total_m2 = coerce_float(floor_size.get("value")) if floor_size.get("unitCode") == "MTK" else None
+        # The card's floorSize is the single m² figure ML shows on the
+        # polycard, which for houses is the COVERED surface (a 450 m² lot
+        # with a 132 m² house shows "132 m²").  Store it as covered_m2 only:
+        # persist_listings() merges every non-None card field over the stored
+        # record on each run, so a fabricated total_m2 would clobber the
+        # correct total extracted from the detail page on the next daily run.
+        covered_from_card = (
+            coerce_float(floor_size.get("value")) if floor_size.get("unitCode") == "MTK" else None
+        )
 
         seller = item.get("seller", {})
         real_estate = seller.get("name") if isinstance(seller, dict) else None
@@ -370,8 +381,8 @@ def _parse_json_ld_listing(item: dict) -> Optional[Dict[str, Any]]:
             "price": coerce_float(price),
             "currency": currency,
             "address": address or None,
-            "covered_m2": total_m2,
-            "total_m2": total_m2,
+            "covered_m2": covered_from_card,
+            "total_m2": None,  # only the detail page knows the real total surface
             "real_estate": real_estate,
             "published_at": published_at,
             "url": url,
@@ -382,20 +393,143 @@ def _parse_json_ld_listing(item: dict) -> Optional[Dict[str, Any]]:
         return None
 
 
+_IMAGES_READY_JS = """() => {
+    const imgs = document.querySelectorAll('img[src*="mlstatic"], img[src*="cdn"]');
+    return imgs.length >= 2;
+}"""
+
+_SPECS_READY_JS = """() => {
+    return [...document.querySelectorAll('table th')]
+        .some(th => /superficie/i.test(th.textContent || ''));
+}"""
+
+
+async def _wait_ok(page, script: str, timeout: int) -> bool:
+    """Wait for a page condition, returning False instead of raising."""
+    try:
+        await page.wait_for_function(script, timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
+def _extract_number(text: str) -> Optional[float]:
+    """First number in a value that may carry a unit, e.g. '401 m²' → 401.
+
+    The matched text is handed to coerce_float untouched: it already knows
+    Argentine formatting, so '202,4' → 202.4 and '1.234' → 1234.  Pre-swapping
+    the comma (as this used to do) made coerce_float read the decimal point as
+    a thousands separator, turning '202,4' into 2024.
+    """
+    m = re.search(r"([\d.,]+)", text)
+    if m:
+        return coerce_float(m.group(1))
+    return None
+
+
+def _apply_specs(result: Dict[str, Any], specs: Dict[str, str]) -> None:
+    """Map ML's label→value spec rows onto house fields, in place.
+
+    Also enforces the surface invariant: the total can never be smaller than
+    the covered area.  When a seller fills the two fields inconsistently, the
+    covered value is kept (it drives price/m²) and the impossible total is
+    dropped instead of persisting a nonsensical pair.
+    """
+    if "Superficie total" in specs:
+        result["total_m2"] = _extract_number(specs["Superficie total"])
+    if "Superficie cubierta" in specs:
+        result["covered_m2"] = _extract_number(specs["Superficie cubierta"])
+    if "Dormitorios" in specs:
+        result["dormitorios"] = coerce_int(specs["Dormitorios"])
+    if "Baños" in specs:
+        result["banos"] = coerce_int(specs["Baños"])
+    if "Cocheras" in specs:
+        result["parking"] = coerce_int(specs["Cocheras"]) > 0
+    if "Antigüedad" in specs:
+        m = re.search(r"(\d+)", specs["Antigüedad"])
+        if m:
+            result["age_years"] = int(m.group(1))
+    if "Ambientes" in specs:
+        result["ambientes"] = coerce_int(specs["Ambientes"])
+    if "Cantidad de pisos" in specs:
+        result["floor"] = specs["Cantidad de pisos"]
+
+    total, covered = result.get("total_m2"), result.get("covered_m2")
+    if total is not None and covered is not None and total < covered:
+        logger.warning(
+            "ML specs: total_m2 (%s) < covered_m2 (%s) — dropping total", total, covered
+        )
+        result["total_m2"] = None
+
+
+def _specs_from_html(html: str) -> Dict[str, str]:
+    """Read the label→value spec rows out of a detail page's HTML tables."""
+    soup = BeautifulSoup(html, "lxml")
+    specs: Dict[str, str] = {}
+    for table in soup.find_all("table"):
+        for row in table.find_all("tr"):
+            th, td = row.find("th"), row.find("td")
+            if th and td:
+                specs[th.get_text(strip=True)] = td.get_text(strip=True)
+    return specs
+
+
+async def _fetch_specs_http(url: str) -> Dict[str, str]:
+    """GET a detail page without a browser and return its spec rows.
+
+    Returns {} on any redirect or non-200 answer: closed listings 302 to a
+    search page, and reading surfaces out of an unrelated page would be worse
+    than having none.
+    """
+    try:
+        async with httpx.AsyncClient(follow_redirects=False, timeout=20) as client:
+            resp = await client.get(url, headers={
+                "User-Agent": UA,
+                "Accept-Language": "es-AR,es;q=0.9",
+                "Accept": "text/html,application/xhtml+xml",
+            })
+        if resp.status_code != 200:
+            return {}
+        return _specs_from_html(resp.text)
+    except Exception as e:
+        logger.error("ML HTTP specs fetch failed %s: %s: %s", url[-60:], type(e).__name__, e)
+        return {}
+
+
+async def _detail_from_http(url: str) -> Dict[str, Any]:
+    """Detail fields recoverable for a listing the browser could not open."""
+    specs = await _fetch_specs_http(url)
+    result: Dict[str, Any] = {}
+    if specs:
+        _apply_specs(result, specs)
+    return result
+
+
 async def _scrape_detail(page, url: str) -> Dict[str, Any]:
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        # Wait for gallery images to load
-        try:
-            await page.wait_for_function(
-                """() => {
-                    const imgs = document.querySelectorAll('img[src*="mlstatic"], img[src*="cdn"]');
-                    return imgs.length >= 2;
-                }""",
-                timeout=8000,
+
+        # Finalized (closed) listings answer 302 and land on a search results
+        # page.  Extracting from there would mix a results page into this
+        # listing's record (wrong images, descriptions, surfaces), so bail out
+        # to the HTTP path, which reports the redirect instead of guessing.
+        listing_id = re.search(r"(MLA-\d+)", url)
+        if listing_id and listing_id.group(1) not in page.url:
+            logger.info(
+                "ML detail %s: redirected to %s — falling back to HTTP",
+                url[-60:], page.url[:60],
             )
-        except Exception:
-            await asyncio.sleep(3)
+            return await _detail_from_http(url)
+
+        # Gallery images and the specs table render independently, so wait for
+        # both at once (worst case max(8s), not 8s + 8s) — reading surfaces
+        # from a half-rendered page used to leave total_m2 missing.
+        images_ready, _ = await asyncio.gather(
+            _wait_ok(page, _IMAGES_READY_JS, 8000),
+            _wait_ok(page, _SPECS_READY_JS, 8000),
+        )
+        if not images_ready:
+            await asyncio.sleep(2)
 
         result: Dict[str, Any] = {}
 
@@ -457,33 +591,17 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
         specs = specs_data.get("specs", {})
         amenities_from_tables = specs_data.get("amenities", [])
 
-        # Map technical specs to house fields
-        # Extract numbers from values that may contain units (e.g., "401 m²")
-        def extract_number(text: str) -> Optional[float]:
-            m = re.search(r"([\d.,]+)", text)
-            if m:
-                return coerce_float(m.group(1).replace(",", "."))
-            return None
+        # Map technical specs to house fields (also drops an impossible total)
+        _apply_specs(result, specs)
 
-        if "Superficie total" in specs:
-            result["total_m2"] = extract_number(specs["Superficie total"])
-        if "Superficie cubierta" in specs:
-            result["covered_m2"] = extract_number(specs["Superficie cubierta"])
-        if "Dormitorios" in specs:
-            result["dormitorios"] = coerce_int(specs["Dormitorios"])
-        if "Baños" in specs:
-            result["banos"] = coerce_int(specs["Baños"])
-        if "Cocheras" in specs:
-            result["parking"] = coerce_int(specs["Cocheras"]) > 0
-        if "Antigüedad" in specs:
-            # Extract number from "43 años"
-            m = re.search(r"(\d+)", specs["Antigüedad"])
-            if m:
-                result["age_years"] = int(m.group(1))
-        if "Ambientes" in specs:
-            result["ambientes"] = coerce_int(specs["Ambientes"])
-        if "Cantidad de pisos" in specs:
-            result["floor"] = specs["Cantidad de pisos"]
+        # Browser path gave no surface rows (not hydrated in time, or a
+        # layout without tables): read them from the same page over plain
+        # HTTP, where the table is server-rendered and needs no JavaScript.
+        if "Superficie total" not in specs and "Superficie cubierta" not in specs:
+            http_specs = await _fetch_specs_http(url)
+            if http_specs:
+                logger.info("ML detail %s: spec rows recovered over HTTP", url[-60:])
+                _apply_specs(result, http_specs)
 
         # Use amenities from tables (only those with "Sí")
         if amenities_from_tables:
