@@ -14,6 +14,7 @@ const mapMethods = {
   _geocodeAttemptedSession: null,
   _geocodeAttemptedCount: -1,
   _redrawTimer: null,
+  _mapRO: null,
   geocodeStatus: null,
   _geocodePoll: null,
   _geocodeRunId: null,
@@ -23,12 +24,46 @@ const mapMethods = {
   _markerMap: {},
   mapMissingCount: 0,
   mapLegend: MAP_LEGEND,
+  _leafletPromise: null,
 
-  initMap() {
+  /** Load Leaflet on first use (CDN, SRI-pinned) instead of in <head>. */
+  _loadLeaflet() {
+    if (window.L) return Promise.resolve();
+    if (this._leafletPromise) return this._leafletPromise;
+    this._leafletPromise = new Promise((resolve, reject) => {
+      const css = document.createElement('link');
+      css.rel = 'stylesheet';
+      css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+      css.integrity = 'sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H';
+      css.crossOrigin = 'anonymous';
+      document.head.appendChild(css);
+
+      const js = document.createElement('script');
+      js.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+      js.integrity = 'sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH';
+      js.crossOrigin = 'anonymous';
+      js.onload = () => resolve();
+      js.onerror = () => { this._leafletPromise = null; reject(new Error('leaflet-load-failed')); };
+      document.head.appendChild(js);
+    });
+    return this._leafletPromise;
+  },
+
+  async initMap() {
+    try {
+      await this._loadLeaflet();
+    } catch (e) {
+      console.error(e);
+      this.showToast('No se pudo cargar el mapa (¿sin conexión?).', 'error');
+      return;
+    }
+    // Re-check after the await: the view may have been switched while Leaflet
+    // was still downloading, which unmounts #map via x-if.
     this._resizeMap();
     // The view may have been switched while a geocode fetch was in flight,
     // which unmounts #map via x-if. Abort instead of throwing "Map container not found".
     if (!document.getElementById('map')) return;
+    this._watchBulkBar();
     if (this._map) {
       this._map.invalidateSize({ animate: false });
       this.renderPins();
@@ -100,24 +135,34 @@ const mapMethods = {
       if (existing) {
         // Update existing marker
         existing.setLatLng([h.lat, h.lng]);
-        existing.setStyle({ fillColor: this.pinColor(h) });
+        existing.setStyle(this.markerStyle(h));
         existing.setTooltipContent(
           `<b>${this.escHtml(h.manual_address || h.address || '')}</b><br>${this.escHtml(this.formatPrice(h.price, h.currency))}`
         );
       } else {
         // Create new marker
-        const marker = L.circleMarker([h.lat, h.lng], {
-          radius: 9,
-          fillColor: this.pinColor(h),
-          color: '#ffffff',
-          weight: 2,
-          opacity: 1,
-          fillOpacity: 0.85,
-        });
+        const marker = L.circleMarker([h.lat, h.lng], this.markerStyle(h));
         marker.bindTooltip(
           `<b>${this.escHtml(h.manual_address || h.address || '')}</b><br>${this.escHtml(this.formatPrice(h.price, h.currency))}`
         );
-        marker.on('click', () => this.openDetail(h));
+        // Desktop multi-select: Ctrl/Cmd+click toggles the pin in/out of the
+        // shared selection instead of opening the detail panel. Real touch
+        // events are excluded (some touch devices emulate ctrl on long-press);
+        // no pointer-media query is used — it misclassifies touchscreen
+        // laptops and mice on some Linux setups, silently disabling this.
+        marker.on('click', (e) => {
+          const oe = e.originalEvent;
+          if (oe.pointerType !== 'touch' && (oe.ctrlKey || oe.metaKey)) {
+            this.toggleMapPin(h.internal_id);
+            return;
+          }
+          this.openDetail(h);
+        });
+        // macOS Ctrl+click also fires contextmenu: suppress it while the
+        // modifier is held so the right-click menu doesn't pop up mid-selection.
+        marker.on('contextmenu', (e) => {
+          if (e.originalEvent?.ctrlKey) e.originalEvent.preventDefault();
+        });
         this._markerLayer.addLayer(marker);
         this._markerMap[id] = marker;
       }
@@ -150,8 +195,10 @@ const mapMethods = {
             this._focusActive = false;
             const tm = this._markerMap[fh.internal_id];
             if (tm) {
-              tm.setRadius(9);
-              tm.setStyle({ weight: 2, color: '#ffffff', fillOpacity: 0.85 });
+              // Restore to the marker's own style (keeps the selection ring if
+              // this pin is part of a multi-selection).
+              const cur = this.houses.find(x => x.internal_id === fh.internal_id) || fh;
+              tm.setStyle(this.markerStyle(cur));
             }
           });
         } else {
@@ -175,7 +222,68 @@ const mapMethods = {
   updateMarkerColor(h) {
     const m = this._markerMap[h.internal_id];
     if (m) {
-      m.setStyle({ fillColor: this.pinColor(h) });
+      m.setStyle(this.markerStyle(h));
+    }
+  },
+
+  // ── Pin multi-select (desktop only: Ctrl/Cmd+click) ────────────────────────
+  // Selection state lives in the shared selectedHouses array (same one the
+  // table's checkboxes use), so batchSetReview()/openCompare() work on pins
+  // exactly as they do on table rows.
+
+  // Marker style for a house: selected pins keep their review color but gain a
+  // larger radius + blue ring so multi-selection is visible on the map.
+  markerStyle(h) {
+    const sel = this.selectedHouses.includes(h.internal_id);
+    return {
+      radius: sel ? 13 : 9,
+      fillColor: this.pinColor(h),
+      color: sel ? '#1d4ed8' : '#ffffff',
+      weight: sel ? 3 : 2,
+      opacity: 1,
+      fillOpacity: sel ? 1 : 0.85,
+    };
+  },
+
+  refreshMarkerStyle(id) {
+    const m = this._markerMap?.[id];
+    if (!m) return;
+    const h = this.filteredHouses.find(x => x.internal_id === id)
+      || this.houses.find(x => x.internal_id === id);
+    if (h) m.setStyle(this.markerStyle(h));
+  },
+
+  refreshMarkerStyles() {
+    if (!this._markerMap) return;
+    for (const h of this.filteredHouses) {
+      const m = this._markerMap[h.internal_id];
+      if (m && h.lat != null) m.setStyle(this.markerStyle(h));
+    }
+  },
+
+  toggleMapPin(id) {
+    this.toggleSelectHouse(id);
+    this.refreshMarkerStyle(id);
+  },
+
+  // "Todo lo visible": adds every pin inside the current viewport to the
+  // selection (never removes; use Ctrl+click or Limpiar for that).
+  selectVisibleInViewport() {
+    if (!this._map) return;
+    const bounds = this._map.getBounds();
+    let added = 0;
+    for (const h of this.filteredHouses) {
+      if (h.lat == null || h.lng == null) continue;
+      if (!bounds.contains([h.lat, h.lng])) continue;
+      if (this.selectedHouses.includes(h.internal_id)) continue;
+      this.selectedHouses.push(h.internal_id);
+      added++;
+    }
+    this.refreshMarkerStyles();
+    if (added > 0) {
+      this.showToast(`${this.selectedHouses.length} propiedades seleccionadas`, 'success');
+    } else {
+      this.showToast('No hay propiedades nuevas en el encuadre.', 'info');
     }
   },
 
@@ -191,6 +299,26 @@ const mapMethods = {
     el.style.height = Math.max(200, vh - top - 16) + 'px';
   },
 
+  // Recompute the map height whenever the bulk-action bar above it actually
+  // gains or loses space. Alpine's x-transition keeps the bar in layout for
+  // the whole leave animation and only sets display:none at the end, so a
+  // resize triggered at click time (watcher + $nextTick) still measures the
+  // bar's space and leaves a ~44px gap at the bottom. A ResizeObserver on the
+  // bar fires only when its box really changes — i.e. exactly when the layout
+  // frees or takes the space, before the next paint — so the map is resized
+  // at the moment the bar disappears, whichever code path cleared the selection.
+  _watchBulkBar() {
+    if (this._mapRO || typeof ResizeObserver === 'undefined') return;
+    const bar = document.getElementById('bulk-bar');
+    if (!bar) return;
+    this._mapRO = new ResizeObserver(() => {
+      if (!this.mapView || !this._map) return;
+      this._resizeMap();
+      this._map.invalidateSize({ animate: false });
+    });
+    this._mapRO.observe(bar);
+  },
+
   // Fully tear down the Leaflet map so nothing keeps running (tile layer,
   // canvas renderer, event listeners) while the map is closed in the background.
   destroyMap() {
@@ -204,6 +332,7 @@ const mapMethods = {
     }
     this._markerLayer = null;
     this._markerMap = {};
+    if (this._mapRO) { this._mapRO.disconnect(); this._mapRO = null; }
     this._fittedKey = '';
     this._mapMoving = false;
     this._pendingRedraw = false;
@@ -222,7 +351,7 @@ const mapMethods = {
 
   async openMap() {
     if (this._geocodeRunId) {
-      this.initMap();
+      await this.initMap();
       return;
     }
     // Only auto-start geocoding when the set of ungeocoded houses actually
@@ -250,12 +379,12 @@ const mapMethods = {
         }
       } catch (e) { /* show map anyway; retry is allowed on next open */ }
     }
-    this.initMap();
+    await this.initMap();
   },
 
   async skipGeocode() {
     this.stopGeocoding();
-    this.initMap();
+    await this.initMap();
   },
 
   async pollGeocode(runId) {
@@ -265,8 +394,15 @@ const mapMethods = {
       this.geocodeStatus = status;
       if (status.status === 'running') {
         if (status.progress > prevProgress) {
-          const d = await api('GET', `/users/${this.username}/sessions/${this.currentSession.id}`);
-          this.houses = d.houses || [];
+          // Merge only the houses whose coordinates changed in this run. The
+          // old flow refetched the whole 1.7–2.6 MB session payload on every
+          // 2000 ms tick (~350 MB over a 184-house geocode run).
+          if (status.updated_houses?.length) {
+            this._mergeGeocodeDelta(status.updated_houses);
+          } else {
+            const d = await api('GET', `/users/${this.username}/sessions/${this.currentSession.id}`);
+            this.setHouses(d.houses || []);
+          }
         }
         return;
       }
@@ -274,19 +410,36 @@ const mapMethods = {
       this._geocodePoll = null;
       this._geocodeRunId = null;
       if (status.status === 'done') {
-        const d = await api('GET', `/users/${this.username}/sessions/${this.currentSession.id}`);
-        this.houses = d.houses || [];
+        if (status.updated_houses?.length) {
+          this._mergeGeocodeDelta(status.updated_houses);
+        } else {
+          const d = await api('GET', `/users/${this.username}/sessions/${this.currentSession.id}`);
+          this.setHouses(d.houses || []);
+        }
         this.geocodeStatus = null;
         // Remember how many houses are still ungeocoded so reopen doesn't re-POST.
         this._geocodeAttemptedSession = this.currentSession?.id;
         this._geocodeAttemptedCount = this.houses.filter(h => h.lat == null && (h.manual_address || h.address)).length;
       }
-      if (this.mapView) this.initMap();
+      if (this.mapView) await this.initMap();
     } catch (e) {
       clearInterval(this._geocodePoll);
       this._geocodePoll = null;
       this._geocodeRunId = null;
-      if (this.mapView) this.initMap();
+      if (this.mapView) await this.initMap();
     }
+  },
+
+  /** Apply a run's geocode delta (internal_id/lat/lng/geocode_failed) in place. */
+  _mergeGeocodeDelta(updated) {
+    const byId = new Map(updated.map(u => [u.internal_id, u]));
+    for (const h of this.houses) {
+      const u = byId.get(h.internal_id);
+      if (!u) continue;
+      h.lat = u.lat;
+      h.lng = u.lng;
+      h.geocode_failed = u.geocode_failed;
+    }
+    this._invalidateCache();
   },
 };

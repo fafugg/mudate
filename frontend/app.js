@@ -1,3 +1,27 @@
+// ── Memoization for the heavy getters ─────────────────────────────────────────
+// Alpine re-runs every getter inside each effect that reads it. With 2.338
+// houses, filteredHouses re-filtered + re-sorted the whole list ~6× per render
+// pass, and one review change re-ran all of them. Each memoized getter below
+// caches against the component's _cacheTick — read FIRST so it is the only
+// reactive dependency the effect registers from the getter — so dependents
+// re-run exactly once per _invalidateCache(). The store itself is module-level
+// (outside Alpine's reactive proxy) to keep it out of the dependency graph.
+const _memo = {};
+
+// Price-change % derived once per access and cached on the house itself
+// (h._pct): the table called priceChangePct(h) 5× per row — ~1.000 calls per
+// render pass — each re-walking previous_prices. Houses are replaced wholesale
+// on every scrape/dedup reload, so a stale _pct is impossible in practice; the
+// lazy fallback below covers any in-place edge case anyway.
+function computePct(h) {
+  if (!h.previous_prices || h.previous_prices.length === 0) return null;
+  const first = h.previous_prices[0];
+  if (!h.price || !first || !first.price) return null;
+  if (h.currency !== first.currency) return null;
+  const pct = ((h.price - first.price) / first.price) * 100;
+  return Math.abs(pct) < 0.5 ? null : pct;
+}
+
 function app() {
   return {
     // ── Core state ───────────────────────────────────────────────────────────
@@ -31,6 +55,8 @@ function app() {
     filterProvider: [],
     filtersOpen: false,
     isNarrow: false,
+    isMobile: false,
+    _cacheTick: 0,
     mobileInfoOpen: true,
     switchingView: false,
     _editSources: [],
@@ -82,7 +108,11 @@ function app() {
     },
 
     get propertyTypes() {
-      return [...new Set(this.houses.map(h => h.type).filter(Boolean))].sort();
+      const t = this._cacheTick;
+      if (_memo.ptypesT === t) return _memo.ptypes;
+      const types = [...new Set(this.houses.map(h => h.type).filter(Boolean))].sort();
+      _memo.ptypes = types; _memo.ptypesT = t;
+      return types;
     },
 
     get activeExtraFilters() {
@@ -98,11 +128,15 @@ function app() {
     },
 
     get availableEngines() {
+      const t = this._cacheTick;
+      if (_memo.enginesT === t) return _memo.engines;
       const engines = new Set(this.houses.map(h => h.search_engine).filter(Boolean));
       for (const src of (this.currentSession?.search_sources || [])) {
         if (src.engine) engines.add(src.engine);
       }
-      return [...engines].sort();
+      const list = [...engines].sort();
+      _memo.engines = list; _memo.enginesT = t;
+      return list;
     },
 
     get dedupAllChecked() {
@@ -118,6 +152,8 @@ function app() {
     },
 
     get filteredHouses() {
+      const t = this._cacheTick;
+      if (_memo.fhT === t) return _memo.fh;
       let list = [...this.houses];
       if (this.filterStatus.length > 0) list = list.filter(h => this.filterStatus.includes(h.status));
       if (this.filterType.length > 0) list = list.filter(h => this.filterType.includes(h.type));
@@ -167,6 +203,7 @@ function app() {
         if (av > bv) return this.sortDir === 'asc' ? 1 : -1;
         return 0;
       });
+      _memo.fh = list; _memo.fhT = t;
       return list;
     },
 
@@ -186,19 +223,25 @@ function app() {
     },
 
     get priceChangeSummary() {
+      const t = this._cacheTick;
+      if (_memo.summaryT === t) return _memo.summary;
       const up = this.houses.filter(h => { const p = this.priceChangePct(h); return p !== null && p > 0; }).length;
       const down = this.houses.filter(h => { const p = this.priceChangePct(h); return p !== null && p < 0; }).length;
       const parts = [];
       if (down > 0) parts.push(`${down} bajaron`);
       if (up > 0) parts.push(`${up} subieron`);
-      return parts.length > 0 ? parts.join(', ') : null;
+      const summary = parts.length > 0 ? parts.join(', ') : null;
+      _memo.summary = summary; _memo.summaryT = t;
+      return summary;
     },
 
     get sessionStats() {
+      const t = this._cacheTick;
+      if (_memo.statsT === t) return _memo.stats;
       const active = this.houses.filter(h => h.status === 'active');
       const prices = active.map(h => h.price).filter(p => p != null && p > 0);
       const pricesM2 = active.map(h => h.price_per_m2).filter(p => p != null && p > 0);
-      return {
+      const stats = {
         total: this.houses.length,
         active: active.length,
         removed: this.houses.length - active.length,
@@ -207,9 +250,13 @@ function app() {
         priceMedian: prices.length ? prices.sort((a, b) => a - b)[Math.floor(prices.length / 2)] : null,
         avgM2: pricesM2.length ? Math.round(pricesM2.reduce((a, b) => a + b, 0) / pricesM2.length) : null,
       };
+      _memo.stats = stats; _memo.statsT = t;
+      return stats;
     },
 
     get manualAddressHouses() {
+      const t = this._cacheTick;
+      if (_memo.manualT === t) return _memo.manual;
       function group(h) {
         const failed = !!h.geocode_failed;
         const hasManual = !!h.manual_address;
@@ -218,11 +265,13 @@ function app() {
         if (!failed &&  hasManual) return 2;
         return 3;
       }
-      return [...this.houses].sort((a, b) => {
+      const sorted = [...this.houses].sort((a, b) => {
         const gd = group(a) - group(b);
         if (gd !== 0) return gd;
         return (String(a.search_engine_id || '')).localeCompare(String(b.search_engine_id || ''));
       });
+      _memo.manual = sorted; _memo.manualT = t;
+      return sorted;
     },
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -374,6 +423,22 @@ function app() {
       this.isNarrow = mq.matches;
       mq.addEventListener('change', (e) => { this.isNarrow = e.matches; });
 
+      // Phone layout: only one of the two list renderings (desktop table /
+      // mobile cards) is mounted at a time. The 768px breakpoint matches
+      // Tailwind's md: (min-width: 768px).
+      const mobMq = window.matchMedia('(max-width: 767px)');
+      this.isMobile = mobMq.matches;
+      mobMq.addEventListener('change', (e) => { this.isMobile = e.matches; });
+
+      // Invalidate the memoized getters whenever an input that feeds them
+      // changes. House CONTENT edits (review/notes/address changed in place)
+      // don't replace the array, so those methods call _invalidateCache()
+      // explicitly — see saveReview/saveNotes/saveManualAddress/batchSetReview.
+      ['houses', 'currentSession', 'filterStatus', 'filterType', 'filterReview',
+        'filterMinPrice', 'filterMaxPrice', 'filterAddress', 'filterRealEstate',
+        'filterPriceChange', 'filterNotes', 'filterProvider', 'sortBy', 'sortDir',
+      ].forEach(k => this.$watch(k, () => this._invalidateCache()));
+
       const redraw = () => {
         clearTimeout(this._redrawTimer);
         this._redrawTimer = setTimeout(() => {
@@ -393,6 +458,24 @@ function app() {
           this.$nextTick(() => { this._resizeMap(); this._map.invalidateSize({ animate: false }); });
         }
       });
+      // Map resize when the bulk-action bar appears/disappears is handled by a
+      // ResizeObserver on the bar itself (map.js:_watchBulkBar): with
+      // x-transition the bar keeps its space until the animation ends, so a
+      // watcher firing at click time would measure mid-transition and leave a
+      // gap at the bottom of the map when the selection is cleared.
+    },
+
+    // ── Memoized-getter invalidation ─────────────────────────────────────────
+    /** Bump the tick every memoized getter depends on (see _memo). */
+    _invalidateCache() {
+      this._cacheTick++;
+    },
+
+    /** Assign the house list, precomputing the per-house price delta. */
+    setHouses(list) {
+      const houses = list || [];
+      for (const h of houses) h._pct = computePct(h);
+      this.houses = houses;
     },
 
     // ── Navigation ───────────────────────────────────────────────────────────
@@ -444,7 +527,7 @@ function app() {
       this.username = '';
       this.sessions = [];
       this.currentSession = null;
-      this.houses = [];
+      this.setHouses([]);
       this.runId = null;
       this.runStatus = null;
       this.runDismissed = false;
@@ -521,7 +604,7 @@ function app() {
       try {
         const data = await api('GET', `/users/${this.username}/sessions/${sessionId}`);
         this.currentSession = data;
-        this.houses = data.houses || [];
+        this.setHouses(data.houses || []);
         if (sessionId !== this.runSessionId) {
           this.runStatus = null; this.runDismissed = false;
           this.stopPolling();
@@ -692,6 +775,7 @@ function app() {
 
     async saveReview(h, value) {
       h.review = value;
+      this._invalidateCache();
       try { await api('PATCH', `/houses/${h.internal_id}`, { review: value }); } catch (e) { console.error('Error saving review', e); }
       if (this.mapView && this._markerMap) {
         this.updateMarkerColor(h);
@@ -701,6 +785,7 @@ function app() {
     async saveNotes(h, value) {
       if (!h || value === (h.notes || '')) return;
       h.notes = value;
+      this._invalidateCache();
       try {
         await api('PATCH', `/houses/${h.internal_id}`, { notes: value });
         this.notesSaved = true;
@@ -717,6 +802,7 @@ function app() {
       h.lat = null;
       h.lng = null;
       h.geocode_failed = false;
+      this._invalidateCache();
       if (this._markerLayer) {
         const m = this._markerMap[h.internal_id];
         if (m) { this._markerLayer.removeLayer(m); delete this._markerMap[h.internal_id]; }
@@ -762,6 +848,7 @@ function app() {
                 if (idx !== -1) Object.assign(this.houses[idx], {
                   lat: updated.lat, lng: updated.lng, geocode_failed: updated.geocode_failed,
                 });
+                this._invalidateCache();
               }
             }
           } catch (e) { this._geocodingDetailHouseId = null; }
@@ -909,19 +996,40 @@ function app() {
       }
     },
 
+    clearSelection() {
+      this.selectedHouses = [];
+      if (this.mapView && this._markerMap) this.refreshMarkerStyles();
+    },
+
+    // Esc clears the selection, but only when nothing else is using Esc:
+    // open detail panel / lightbox / modals / focused form fields come first.
+    maybeClearSelectionOnEsc() {
+      if (!this.selectedHouses.length) return;
+      if (this.detailHouse || this.lightboxImg || this.compareHouses.length) return;
+      if (this.modalType !== null || this.showManualAddressModal || this.showShortcuts) return;
+      if (this.dedupGroups.length || this.sameEngineDedupGroups.length) return;
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+      this.clearSelection();
+    },
+
     async batchSetReview(value) {
       const ids = [...this.selectedHouses];
-      for (const id of ids) {
-        const h = this.houses.find(h => h.internal_id === id);
-        if (h) {
-          h.review = value;
-          try { await api('PATCH', `/houses/${id}`, { review: value }); } catch (e) { /* continue */ }
-          if (this.mapView && this._markerMap) {
-            this.updateMarkerColor(h);
-          }
-        }
+      const houses = ids.map(id => this.houses.find(h => h.internal_id === id)).filter(Boolean);
+      for (const h of houses) h.review = value;  // optimistic
+      this._invalidateCache();
+      if (this.mapView && this._markerMap) {
+        for (const h of houses) this.updateMarkerColor(h);
       }
-      this.selectedHouses = [];
+      try {
+        // One request, one db.json write (N individual PATCHes meant N full
+        // rewrites: ~4.3 s and 320 MB of disk writes for 50 houses).
+        await api('PATCH', '/houses/bulk', { house_ids: ids, review: value });
+      } catch (e) {
+        console.error('Error saving reviews', e);
+        this.showToast('No se pudieron guardar las revisiones.', 'error');
+      }
+      this.clearSelection();
       this.showToast(`${ids.length} propiedades actualizadas`, 'success');
     },
 
@@ -951,7 +1059,7 @@ function app() {
         this._geocodeRunId = data.run_id;
         this.geocodeStatus = { status: 'running', message: 'Geocodificando…', progress: 0, total: 0 };
         this._geocodePoll = setInterval(() => this.pollGeocode(data.run_id), 2000);
-        if (this.mapView) this.initMap();
+        if (this.mapView) await this.initMap();
       } catch (e) { this.showToast('Error al iniciar geocodificación.', 'error'); }
     },
 
@@ -963,6 +1071,7 @@ function app() {
           try {
             await api('DELETE', `/users/${this.username}/sessions/${this.currentSession.id}/geodata`);
             this.houses.forEach(h => { h.lat = null; h.lng = null; h.geocode_failed = false; });
+            this._invalidateCache();
             if (this._markerLayer) this._markerLayer.clearLayers();
           } catch (e) { this.showToast('Error al borrar los datos de geo.', 'error'); }
         }
@@ -1159,13 +1268,10 @@ function app() {
 
     // ── Formatting ───────────────────────────────────────────────────────────
     priceChangePct(h) {
-      if (!h.previous_prices || h.previous_prices.length === 0) return null;
-      const first = h.previous_prices[0];
-      if (!h.price || !first || !first.price) return null;
-      if (h.currency !== first.currency) return null;
-      const pct = ((h.price - first.price) / first.price) * 100;
-      if (Math.abs(pct) < 0.5) return null;
-      return pct;
+      if (!h) return null;
+      if (h._pct !== undefined) return h._pct;
+      h._pct = computePct(h);
+      return h._pct;
     },
 
     formatPrice(price, currency) {

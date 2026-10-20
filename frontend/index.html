@@ -5,10 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Mudate</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏠</text></svg>">
+  <!-- Warm up the CDN connections while the page parses (saves a DNS+TCP+TLS
+       round trip on the first request). Leaflet is no longer loaded here:
+       map.js lazy-loads it on first map open, so table-only sessions never
+       download 159 KB. -->
+  <link rel="preconnect" href="https://cdn.tailwindcss.com" />
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <link rel="preconnect" href="https://unpkg.com" crossorigin />
   <script src="https://cdn.tailwindcss.com"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"
+          integrity="sha384-9Ax3MmS9AClxJyd5/zafcXXjxmwFhZCdsT6HJoJjarvCaAkJlk5QDzjLJm+Wdx5F"
+          crossorigin="anonymous"></script>
   <link rel="stylesheet" href="dark.css" />
   <script src="constants.js"></script>
   <style>
@@ -120,7 +127,7 @@
             <input x-show="editingLabel" x-ref="labelInput" x-model="editLabel"
               @blur="saveLabel()" @keydown.enter="$event.target.blur()" @keydown.escape="editingLabel = false"
               class="text-sm font-semibold text-slate-700 bg-white border border-blue-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-0 max-w-[200px]" />
-            <template x-for="src in (currentSession?.search_sources || [])" :key="src.engine + Math.random()">
+            <template x-for="(src, srcIdx) in (currentSession?.search_sources || [])" :key="src.engine + ':' + srcIdx">
               <span @click="openSourceEditor()"
                 class="shrink-0 px-1.5 py-0.5 rounded-full font-medium leading-none text-[10px] cursor-pointer hover:ring-2 hover:ring-blue-300 transition"
                 :class="{'bg-purple-100 text-purple-700': src.engine === 'zonaprop', 'bg-orange-100 text-orange-700': src.engine === 'argenprop', 'bg-yellow-100 text-yellow-700': src.engine === 'mercadolibre', 'bg-blue-100 text-blue-700': src.engine === 'remax'}"
@@ -276,7 +283,7 @@
             <div class="flex-1 text-left min-w-0">
               <div class="flex items-center gap-2 mb-1">
                 <span class="text-sm font-semibold text-slate-800 truncate" x-text="s.label"></span>
-                <template x-for="src in (s.search_sources || [])" :key="src.engine + Math.random()">
+                <template x-for="(src, srcIdx) in (s.search_sources || [])" :key="src.engine + ':' + srcIdx">
                   <span class="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
                     :class="{'bg-purple-100 text-purple-700': src.engine === 'zonaprop', 'bg-orange-100 text-orange-700': src.engine === 'argenprop', 'bg-yellow-100 text-yellow-700': src.engine === 'mercadolibre', 'bg-blue-100 text-blue-700': src.engine === 'remax'}"
                     x-text="ENGINE_LABELS[src.engine] || src.engine"></span>
@@ -667,7 +674,8 @@
 
     <!-- Table -->
     <!-- Bulk action bar -->
-    <div x-show="selectedHouses.length > 0" x-transition
+    <div id="bulk-bar" x-show="selectedHouses.length > 0" x-transition
+      @keydown.escape.window="maybeClearSelectionOnEsc()"
       class="hidden md:flex items-center gap-3 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-xl px-4 py-2.5 mb-3 text-sm">
       <span class="text-blue-700 dark:text-blue-300 font-semibold" x-text="`${selectedHouses.length} seleccionadas`"></span>
       <div class="w-px h-4 bg-blue-200 dark:bg-blue-700"></div>
@@ -683,12 +691,17 @@
         <option value="duplicado">Duplicado</option>
       </select>
       <button @click="openCompare()" class="text-xs bg-white dark:bg-slate-800 border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 px-3 py-1 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/50 transition font-medium">Comparar</button>
-      <button @click="selectedHouses = []" class="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 ml-auto">Limpiar</button>
+      <button x-show="mapView" @click="selectVisibleInViewport()"
+        class="text-xs bg-white dark:bg-slate-800 border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 px-3 py-1 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/50 transition font-medium"
+        title="Seleccionar todos los pins dentro del encuadre actual">Todo lo visible</button>
+      <button @click="clearSelection()" class="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 ml-auto">Limpiar</button>
     </div>
 
     <!-- Desktop table — unmounted in map view so Alpine isn't re-evaluating
-         hundreds of rows while the map is being panned/zoomed -->
-    <template x-if="!mapView">
+         hundreds of rows while the map is being panned/zoomed, and unmounted
+         on phones so the mobile card list is the only one built (both lists
+         used to be constructed on every render pass) -->
+    <template x-if="!mapView && !isMobile">
     <div class="hidden md:block bg-white rounded-xl border border-slate-200 table-wrap shadow-sm">
       <table class="min-w-full text-xs">
         <thead class="bg-slate-50 border-b border-slate-200">
@@ -808,8 +821,8 @@
     </div>
     </template>
 
-    <!-- Mobile card list -->
-    <template x-if="!mapView">
+    <!-- Mobile card list — only mounted on phones (see isMobile) -->
+    <template x-if="!mapView && isMobile">
     <div class="space-y-2 md:hidden">
       <template x-for="(h, i) in pagedHouses" :key="h.internal_id">
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm px-4 py-3 flex flex-col gap-2"
@@ -940,6 +953,12 @@
         class="absolute bottom-4 right-4 z-[400] bg-white shadow border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-blue-600 hover:border-blue-300 transition">
         ⊙ Centrar
       </button>
+
+      <!-- Ctrl+click hint (desktop only, hidden while a selection is active) -->
+      <div x-show="selectedHouses.length === 0"
+        class="hidden md:block absolute bottom-4 left-1/2 -translate-x-1/2 z-[400] bg-white/95 dark:bg-slate-800/95 shadow-sm border border-slate-100 dark:border-slate-700 text-slate-400 dark:text-slate-500 text-[11px] px-3 py-1.5 rounded-full pointer-events-none">
+        <kbd class="font-mono border border-slate-200 dark:border-slate-600 rounded px-1 py-0.5 text-[10px] bg-slate-50 dark:bg-slate-700 dark:text-slate-300">Ctrl</kbd>+clic para seleccionar varias propiedades
+      </div>
 
       <!-- Legend -->
       <div class="absolute bottom-4 left-4 z-[400] bg-white shadow border border-slate-100 rounded-lg px-3 py-2 text-[11px] space-y-1">
@@ -1359,11 +1378,14 @@
     </div>
   </div>
 
-  <!-- ── MANUAL ADDRESS MODAL ── -->
+  <!-- MANUAL ADDRESS MODAL — the inner panel is x-if'd so the ~2.338-row
+       table only exists in the DOM while the modal is open (x-show alone kept
+       every row mounted and re-rendered forever) -->
   <div x-show="showManualAddressModal" x-cloak x-effect="document.body.style.overflow = showManualAddressModal ? 'hidden' : ''"
     @click.self="showManualAddressModal = false"
     @keydown.escape.window="showManualAddressModal = false"
     class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[1400] p-4">
+    <template x-if="showManualAddressModal">
     <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden">
 
       <!-- Header -->
@@ -1465,6 +1487,7 @@
       </div>
 
     </div>
+    </template>
   </div>
 
   <!-- ── TOOLTIP ── -->

@@ -162,6 +162,17 @@ Click **Mapa**. Addresses are geocoded automatically the first time you open map
 
 If an address fails to geocode, you can enter a corrected address manually in the detail panel and click **Geocodificar** to retry.
 
+#### Selecting multiple pins (desktop only)
+
+**Ctrl**+click (or **Cmd**+click on macOS) a pin to add it to a selection instead of opening the detail panel; Ctrl+click it again to remove it. Selected pins keep their review color and gain a blue ring and a larger radius. While one or more pins are selected, the bulk-action bar appears above the map:
+
+- **Revisión** — batch-apply a review status to every selected property; pins recolor immediately and a toast confirms the count.
+- **Comparar** — open the side-by-side comparison modal (2–5 properties).
+- **Todo lo visible** — add every pin inside the current viewport to the selection.
+- **Limpiar** or **Esc** — clear the selection.
+
+The selection is shared with the table view: properties selected on the map appear as checked rows in the table and vice versa. Touch devices always open the detail panel on tap; the modifier-click path ignores touch-origin events.
+
 ### 7. Export
 
 Open the **⋯** menu and choose **Exportar CSV**. The export respects the currently active filters.
