@@ -90,12 +90,12 @@ mudate/
 | **Price history** | Every price change recorded per property; % change shown in table |
 | **Publish tracking** | `first_published_at` (original post date, stable across re-posts/merges) + `republish_count`; "Antigüedad" column and detail-panel age in days |
 | **Geocoding** | Nominatim (pipelined rate limiter) → OpenCage fallback; manual address override |
-| **Interactive map** | Leaflet + OSM; color-coded pins by review status; fly-to on click; canvas rendering |
+| **Interactive map** | Leaflet + OSM; color-coded pins by review status; fly-to on click; canvas rendering; Ctrl/Cmd+click multi-select on desktop |
 | **Review system** | A revisar / En duda / Interesante / Descartada / Contactar / Duplicado |
 | **Filter & sort** | By review, type, status, price range, address, real estate, notes, provider, price changes |
 | **Cross-engine dedup** | Fuzzy address matching (Jaccard ≥ 0.75) with price/m² tolerance |
 | **Same-engine dedup** | Reactivation detection: merges re-listed properties from the same portal |
-| **Bulk actions** | Multi-select with batch review + compare (2-5 properties side by side) |
+| **Bulk actions** | Multi-select via table checkboxes or Ctrl+click on map pins (desktop); batch review + compare (2-5 properties side by side) |
 | **Export CSV** | Respects active filters; includes BOM for Excel |
 | **Export/Import DB** | Full db.json backup & restore via admin UI |
 | **Auto-refresh** | APScheduler re-scrapes all sessions daily at 08:00 ART |
