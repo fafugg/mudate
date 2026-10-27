@@ -283,7 +283,9 @@ The scheduler re-scrapes every session for every user every morning at **08:00 A
 
 ### Key design decisions
 
-**Single-file JSON database.** All data lives in one `db.json` file. This keeps deployment trivial (no database server to manage) and makes backup/restore a single file copy. Writes are protected by a file lock (`filelock`) and use a write-to-temp-then-`os.replace` pattern so a crash mid-write never corrupts the file.
+**Single-file JSON database.** All data lives in one `db.json` file. This keeps deployment trivial (no database server to manage) and makes backup/restore a single file copy. Writes are protected by a file lock (`filelock`) and use a write-to-temp-then-`os.replace` pattern so a crash mid-write never corrupts the file. Reads are served from an in-memory copy validated against the file's mtime, so a 6 MB parse per request became one parse per actual change; the file is written compact (no indentation) to cut the size and the serialize time of every save.
+
+**Gzip + ETag on API responses.** Static assets and JSON go out gzipped, and GET JSON responses carry a weak `ETag` with `Cache-Control: no-cache`: the session payload (1.7–2.6 MB) answers `304 Not Modified` while nothing changed, and the browser revalidates on every fetch instead of trusting a stale copy.
 
 **No build step.** The frontend is served as static files (Alpine.js + Tailwind via CDN). No npm, no bundler, no compilation. FastAPI serves it as a static file mount.
 
@@ -351,7 +353,8 @@ mudate/
 │   └── repair_ml_images.py  # Restore ML galleries clobbered to card thumbnails
 │
 ├── data/                    # Created automatically — holds db.json (git-ignored)
-│   └── db.json
+│   ├── db.json
+│   └── db.json.geocache.json  # Address → coords cache (TTL'd failures)
 │
 ├── Dockerfile
 ├── docker-compose.yml
@@ -369,8 +372,10 @@ mudate/
 #### `read_db() → dict`
 Reads and returns the full database from `db.json`. Safe to call without holding the file lock (reads are non-destructive). Returns a default empty structure `{"users": {}, "houses": {}}` if the file doesn't exist or is corrupted.
 
+`db.json` is parsed at most once per mtime change: the parsed dict is cached in memory and reused while the file is untouched (any external write — `import-db`, a script, another process — bumps the mtime and invalidates it automatically). **The returned dict IS that cache, not a copy**, so treat it as read-only: mutating it outside `atomic_update()` changes what later reads see while never reaching disk.
+
 #### `atomic_update(fn: Callable[[dict], None]) → None`
-The only way to write to the database. Acquires the file lock, reads the current state, calls `fn(db)` to mutate it in-place, writes to a `.tmp` file, then atomically replaces `db.json`. A crash mid-write never leaves the database in a corrupt state.
+The only way to write to the database. Acquires the file lock, reads the current state, calls `fn(db)` to mutate it in-place, writes to a `.tmp` file, then atomically replaces `db.json`. A crash mid-write never leaves the database in a corrupt state. The in-memory cache stays in sync (the written dict is the cached one); if `fn` or the write raises, the cache is dropped so the next read re-parses the file on disk.
 
 ---
 
@@ -386,13 +391,17 @@ Centralized configuration singleton. All environment variables and magic constan
 - `valid_engines` — tuple of supported engine names: `("zonaprop", "argenprop", "mercadolibre", "remax")`
 - `max_upload_mb` — max import file size (default: 50)
 - `run_prune_hours` — max age for finished runs in memory (default: 24)
+- `playwright_executable_path` — optional Chromium binary (env: `PLAYWRIGHT_EXECUTABLE_PATH`); empty uses Playwright's bundled build
 
 ---
 
 ### Backend — `geocoder.py`
 
-#### `geocode(address: str) → Tuple[Optional[float], Optional[float]]`
-Public entry point. Resolves an Argentine address string to `(lat, lng)`. Tries up to three progressively simplified address variants against Nominatim, then falls back to OpenCage if configured. Returns `(None, None)` if all sources fail.
+#### `geocode(address: str, force: bool = False) → Tuple[Optional[float], Optional[float]]`
+Public entry point. Resolves an Argentine address string to `(lat, lng)`. Consults the persistent address cache first (skipped when `force=True`), then tries up to three progressively simplified address variants against Nominatim, then falls back to OpenCage if configured. Returns `(None, None)` if all sources fail.
+
+#### `save_geocache() → None`
+Persists the address cache to `db.json.geocache.json` (next to the database, so it lives in the same volume) with an atomic replace. Lookups only mark the cache dirty; the file is written every few batches during a geocode run and once at the end, so a 184-house run does 19 writes instead of 184. Expired failures are dropped on the way out. Entries are `[lat, lng]` on success and `{"failed_at": iso}` on failure — failures are only honoured for 7 days (`_NEGATIVE_TTL`), because a timeout or a 429 is indistinguishable from "no match" and must not pin a house without coordinates forever.
 
 #### `_nominatim_rl(query: str) → Optional[Tuple[float, float]]`
 Rate-limited Nominatim call. Acquires a scheduling semaphore only long enough to claim the next permitted send-time slot (advancing `_nom_next_send` by 1.1 s), then releases it before making the HTTP call. This pipelining allows multiple concurrent geocoding tasks to overlap their HTTP waits without violating Nominatim's 1 req/s policy.
@@ -525,6 +534,9 @@ Cancels an active run by setting `runs[run_id]["cancelled"] = True`. The scraper
 #### `PATCH /api/houses/{house_id}`
 Updates user-set fields on a house: `review`, `notes`, and/or `manual_address`. Setting a `manual_address` clears the existing geocode result so it can be re-geocoded with the corrected address.
 
+#### `PATCH /api/houses/bulk`
+Applies one `review` value to many houses in a single write. The bulk-action bar used to fire one `PATCH /api/houses/{id}` per selected house, and each one rewrote the whole `db.json`; 50 houses meant ~4 s of writes. `review` is validated against the values the UI offers, since a typo would otherwise be stamped on every selected house at once.
+
 #### `POST /api/users/{username}/sessions/{session_id}/geocode`
 Launches geocoding for all un-geocoded houses in a session as a background task. Accepts a `force=true` query parameter to retry previously failed addresses.
 
@@ -541,7 +553,7 @@ Detects same-engine reactivation duplicates (agent deactivated + re-listed). Ret
 Merges same-engine reactivation duplicates: keeps the original house, transfers data from the re-listed house, and deletes the duplicate. Optionally accepts `selected_groups`.
 
 #### `_run_geocode(house_ids, run_id, runs) → None`
-Geocodes a list of house IDs concurrently (up to 10 at a time via `asyncio.Semaphore`). Each task calls `geocoder.geocode()` and saves the result with `atomic_update`. The Nominatim rate limiter inside the geocoder ensures the 1 req/s policy is respected globally across all concurrent tasks.
+Geocodes a list of house IDs concurrently (up to 10 at a time via `asyncio.Semaphore`). Results are collected and written with `atomic_update` every 10 houses (and once at the end), so a run does ~19 writes instead of one per house. Each batch also extends `runs[run_id]["updated_houses"]`, the delta the frontend merges instead of refetching the whole session. The Nominatim rate limiter inside the geocoder ensures the 1 req/s policy is respected globally across all concurrent tasks.
 
 ---
 

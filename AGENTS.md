@@ -29,9 +29,9 @@ FastAPI (main.py)
   │   ├── argenprop.py     — Argenprop scraper
   │   ├── mercadolibre.py  — MercadoLibre scraper
   │   └── remax.py         — Remax scraper
-  ├── geocoder.py          — Nominatim cascade → OpenCage fallback
-  ├── geocoding_tasks.py   — concurrent geocode runner
-  ├── storage.py           — atomic JSON read/write (filelock + temp+replace)
+  ├── geocoder.py          — Nominatim cascade → OpenCage, address cache (file sidecar)
+  ├── geocoding_tasks.py   — concurrent geocode runner (batched writes)
+  ├── storage.py           — atomic JSON read/write (filelock + temp+replace + mtime cache)
   ├── house_fields.py      — single source of truth for house-field rules
   ├── config.py            — all env vars & constants
   └── schemas.py           — Pydantic request/response models
@@ -45,9 +45,9 @@ db.json (single-file JSON database)
 mudate/
 ├── backend/
 │   ├── main.py            — FastAPI app, all routes, lifespan
-│   ├── storage.py         — read_db() & atomic_update()
+│   ├── storage.py         — read_db() (mtime-cached) & atomic_update()
 │   ├── house_fields.py    — single source of truth for house-field rules
-│   ├── geocoder.py        — Nominatim (pipelined rate limiter) → OpenCage
+│   ├── geocoder.py        — Nominatim (pipelined rate limiter) → OpenCage, TTL'd address cache
 │   ├── geocoding_tasks.py — async concurrency for batch geocoding
 │   ├── scheduler.py       — daily 08:00 ART auto-refresh
 │   ├── config.py          — Settings dataclass (env-driven)
@@ -127,6 +127,7 @@ Deduplication: houses with same `search_engine_id` or URL across sessions are me
 | POST | `/api/users/{username}/sessions/{id}/same-engine-dedup/preview` | Preview reactivation duplicates |
 | POST | `/api/users/{username}/sessions/{id}/same-engine-dedup/apply` | Apply reactivation dedup (merge) |
 | GET/PATCH | `/api/houses/{id}` | Get/update review, notes, manual_address |
+| PATCH | `/api/houses/bulk` | Same review for many houses in ONE write (validated) |
 | POST | `/api/houses/{id}/geocode` | Geocode single house |
 | GET/DELETE | `/api/runs/{id}` | Poll/cancel run |
 | GET | `/api/scheduler` | Scheduler status |
@@ -150,6 +151,7 @@ Deduplication: houses with same `search_engine_id` or URL across sessions are me
 6. **Single source of truth for house fields** — `house_fields.py` owns every rule for mutable fields, publication dates and the re-post counter; no other module re-implements them. Merging is shrink-proof for galleries: a search-card thumbnail (MercadoLibre: 1 image, Argenprop: ≤5) can never replace or wipe the detail-page images stored for a house
 7. **Marquee selection intercepts at `document` capture** — Leaflet binds its pan handler to the map container and, on mousedown, attaches its own `mousemove` to `document`; `stopPropagation` from a container listener is too late, so the Ctrl/Cmd+drag handler listens on `document` in the capture phase and calls `stopImmediatePropagation()` on mousedown/mousemove/mouseup, with `dragging.disable()` and re-enable deferred to a `setTimeout(…, 0)` so no residual pan applies. Leaflet's stock `boxZoom` is disabled (`boxZoom: false`) to keep the gesture unambiguous
 8. **Leaflet handles never enter Alpine's reactive graph** — everything stored on the Alpine component is wrapped in a Vue reactive proxy, and Leaflet compares listener contexts by identity (`Evented._off` skips an entry when `l.ctx !== context`). A raw-vs-proxy mismatch silently skips the unbind: a marker tooltip opened just before the detail panel kept its `zoomanim` listener with `_map === null` and the next zoom threw `TypeError: Cannot read properties of null (reading '_latLngToNewLayerPoint')`. `frontend/map.js` marks the map, the marker layer, every marker, its tooltip and the saved center with `markRaw()` (Vue's `__v_skip` flag, Alpine ships `@vue/reactivity` without exposing `markRaw`), so they stay raw however they are read back
+9. **`read_db()` hands out the cached dict, not a copy** — parsing 6 MB per request was the app's biggest constant cost, so the parsed dict is cached and validated against the file mtime. The rule that comes with it: code reads `read_db()`, and any mutation goes through `atomic_update()`'s closure. Mutating a `read_db()` result directly leaks into later reads while never reaching disk. Address failures in the geocache follow the same logic: they are remembered (a timeout is indistinguishable from "no match") but only for `_NEGATIVE_TTL`, so a bad night at Nominatim cannot pin houses without coordinates
 
 ### Key Backend Files
 
@@ -160,16 +162,18 @@ Deduplication: houses with same `search_engine_id` or URL across sessions are me
 | `backend/main.py:84-116` | `POST /api/users/{username}/sessions` — creates session with validation |
 | `backend/main.py:157-181` | `POST /api/users/{username}/sessions/{id}/run` — launches scrape background task |
 | `backend/main.py:184-200` | `PATCH /api/houses/{id}` — updates review, notes, manual_address |
+| `backend/main.py` | `_etag_middleware()` — weak ETag + `Cache-Control: no-cache` on GET JSON (streams `FileResponse` untouched); `GZipMiddleware`; `bulk_update_houses()` — one write for many reviews |
 | `backend/main.py:255-294` | `POST /api/users/{username}/sessions/{id}/geocode` — batch geocoding launcher |
 | `backend/config.py:13-51` | `Settings` dataclass — all env vars and magic constants |
-| `backend/storage.py:36-48` | `atomic_update()` — write-to-temp-then-replace with filelock |
+| `backend/storage.py:36-48` | `atomic_update()` — write-to-temp-then-replace with filelock; `read_db()` caches the parse per mtime and returns that object (read-only!) |
 | `backend/house_fields.py` | Single source of truth: `MUTABLE_LISTING_FIELDS`, `original_published_at()`, `advance_first_published()`, `bump_republish()`, `remember_price()`, `sync_mutable_fields()` (an image gallery is never replaced by a shorter one), `migrate_publish_fields()` |
 | `backend/scrapers/base.py` | `BaseScraper` ABC — `launch_browser()`, shared utils, search-phase block helpers (`BLOCK_STATUSES`, `engine_blocked_error()`, `challenge_marker_in_page()`) |
 | `backend/scrapers/runner.py:47-163` | `run_scrape()` — orchestrates multi-source scrape lifecycle |
 | `backend/scrapers/persistence.py` | `persist_listings()` — merges scraped data into db.json, deduplicates, marks removed, counts re-activations |
 | `backend/same_engine_dedup.py` | `find_same_engine_duplicates()` / `apply_same_engine_dedup()` — reactivation detection & merge |
-| `backend/geocoder.py:207-242` | `geocode()` — Nominatim cascade → OpenCage fallback |
+| `backend/geocoder.py:207-242` | `geocode()` — cache lookup → Nominatim cascade → OpenCage fallback |
 | `backend/geocoder.py:158-179` | `_nominatim_rl()` — pipelined rate limiter |
+| `backend/geocoder.py` | `save_geocache()` / `_cached_result()` — `db.json.geocache.json` sidecar, atomic replace, failures expire after `_NEGATIVE_TTL` (7 days) |
 | `backend/geocoding_tasks.py:15-67` | `run_geocode()` — concurrent geocoding with Semaphore |
 
 ### Key Frontend Files

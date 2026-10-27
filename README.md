@@ -149,7 +149,21 @@ EOF
 
 systemctl --user daemon-reload
 systemctl --user enable --now mudate
+
+# Start at boot without logging in (required on a headless server)
+sudo loginctl enable-linger "$USER"
 ```
+
+#### Raspberry Pi (headless)
+
+A Pi 4/5 running **Raspberry Pi OS Lite 64-bit** works with no desktop. The
+only Pi-specific settings are `PLAYWRIGHT_HEADLESS=1` and a `DB_PATH` inside an
+existing directory; the bundled Chromium runs headless. A ready-to-use systemd
+unit lives at [`deploy/mudate.service`](deploy/mudate.service).
+
+See **[deploy/raspberry-pi.md](deploy/raspberry-pi.md)** for the full walkthrough
+(64-bit check, browser dependencies, swap, boot service, remote access,
+troubleshooting, Docker alternative).
 
 #### 5. (Optional) Set environment variables
 
@@ -170,6 +184,7 @@ All settings are passed as environment variables.
 | `DB_PATH` | `../db.json` | Path to the JSON database file |
 | `OPENCAGE_API_KEY` | *(empty)* | Optional — improves geocoding accuracy. Free tier: 2 500 req/day. Get one at [opencagedata.com](https://opencagedata.com/api#free-trial) |
 | `PLAYWRIGHT_HEADLESS` | *(auto)* | `1` forces headless, `0` forces headed. By default Zonaprop runs **headed** unless Docker is detected (`/.dockerenv`). On a server without a display (Raspberry Pi, NAS, VPS) set `PLAYWRIGHT_HEADLESS=1` in the service environment, otherwise Chromium tries to open a window and the scrape fails |
+| `PLAYWRIGHT_EXECUTABLE_PATH` | *(empty)* | Optional path to a Chromium binary, e.g. `/usr/bin/chromium`. Empty uses Playwright's bundled build. Set it when the bundled browser is unavailable (some ARM64 boards) |
 
 **With Docker**, set variables in a `.env` file next to `docker-compose.yml`:
 
