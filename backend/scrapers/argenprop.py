@@ -128,6 +128,7 @@ class ArgenpropScraper(BaseScraper):
             async def _process_card(raw: dict) -> Dict[str, Any]:
                 listing = _parse_card(raw)
                 se_id = listing.get("search_engine_id") or ""
+                is_known = bool(existing_ids and se_id and se_id in existing_ids)
                 # Always fetch detail pages to get full galleries
                 if listing.get("url"):
                     async with sem:
