@@ -305,7 +305,9 @@ async def geocode_house(house_id: str, background_tasks: BackgroundTasks):
     _prune_runs(runs)
     run_id = str(uuid.uuid4())
     runs[run_id] = make_run(run_id, total=1, message="Geocodificando…", triggered_by="geocode_single")
-    background_tasks.add_task(run_geocode, house_ids=[house_id], run_id=run_id, runs=runs)
+    # force=True: an explicit single-house geocode bypasses the negative
+    # address cache (the address may have just changed, or the user is retrying).
+    background_tasks.add_task(run_geocode, house_ids=[house_id], run_id=run_id, runs=runs, force=True)
     return {"run_id": run_id, "already_done": False}
 
 
@@ -371,7 +373,7 @@ async def geocode_session(
         message="Geocodificando direcciones…",
         triggered_by="geocode",
     )
-    background_tasks.add_task(run_geocode, house_ids=needs_api, run_id=run_id, runs=runs)
+    background_tasks.add_task(run_geocode, house_ids=needs_api, run_id=run_id, runs=runs, force=force)
     return {"run_id": run_id, "already_done": False}
 
 

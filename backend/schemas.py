@@ -174,6 +174,10 @@ class RunResponse(BaseModel):
     errors: List[str] = []
     triggered_by: str = "manual"
     same_engine_dedup: Optional[Dict[str, Any]] = None
+    # Geocode delta: only the houses whose coordinates changed in this run, so
+    # the frontend poll merges them instead of refetching the full session
+    # (which moved ~350 MB of JSON across a 184-house geocode run).
+    updated_houses: List[Dict[str, Any]] = []
 
 
 class RunCreatedResponse(BaseModel):

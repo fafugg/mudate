@@ -25,10 +25,13 @@ measure from when we *send* the request, not from when we *receive* it.
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
+import threading
 import urllib.parse
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
 import httpx
@@ -43,6 +46,30 @@ _NOMINATIM = "https://nominatim.openstreetmap.org/search"
 _OPENCAGE  = "https://api.opencagedata.com/geocode/v1/json"
 
 _OPENCAGE_KEY: str = settings.opencage_api_key
+
+# ── Persistent address → coords cache ─────────────────────────────────────────
+# db.json keeps lat/lng per house, but the lookup itself was never cached:
+# re-runs, forced geocoding and manual-address edits re-queried Nominatim for
+# addresses already resolved (451 of the 2.338 addresses in the current DB are
+# exact duplicates of another house's). Entries: [lat, lng] on success,
+# {"failed_at": iso} on a full-cascade failure. The sidecar file lives next to
+# db.json — inside the persisted volume — so it survives restarts.
+# force=True bypasses reads (but still refreshes the entry).
+
+GEOCACHE_PATH = settings.db_path + ".geocache.json"
+_geocache: Optional[dict] = None
+_geocache_guard = threading.Lock()
+_geocache_dirty = False
+
+# A failed lookup is remembered so a re-run doesn't burn 3+ requests on an
+# address that does not resolve — but only for a while. Both fetchers swallow
+# exceptions and return None, so a timeout or a 429 is indistinguishable from
+# "no match": remembering it forever would leave a house without coordinates
+# until someone clicked the force button. After the TTL the address is retried.
+_NEGATIVE_TTL = timedelta(days=7)
+
+# Returned by _cached_result() for "nothing usable in the cache".
+_MISS = object()
 
 # ── Shared async HTTP client (connection pooling + keep-alive) ────────────────
 
@@ -202,12 +229,97 @@ async def _opencage(query: str) -> Optional[Tuple[float, float]]:
     return None
 
 
+# ── Address cache helpers ─────────────────────────────────────────────────────
+
+def _geocache_load() -> dict:
+    global _geocache
+    if _geocache is None:
+        with _geocache_guard:
+            if _geocache is None:
+                try:
+                    with open(GEOCACHE_PATH, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    _geocache = data if isinstance(data, dict) else {}
+                except (OSError, json.JSONDecodeError):
+                    _geocache = {}
+    return _geocache
+
+
+def _geocache_key(address: str) -> str:
+    """Canonical key: same cleaning the cascade applies, so cosmetic differences
+    between two listings of the same address share one entry."""
+    return _clean(address).lower()
+
+
+def _failure_entry() -> dict:
+    return {"failed_at": datetime.now(timezone.utc).isoformat()}
+
+
+def _failure_is_fresh(entry: dict) -> bool:
+    """True while a negative entry is younger than _NEGATIVE_TTL."""
+    failed_at = entry.get("failed_at")
+    try:
+        parsed = datetime.fromisoformat(failed_at)
+    except (TypeError, ValueError):
+        return False  # unreadable timestamp → treat as expired and retry
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - parsed < _NEGATIVE_TTL
+
+
+def _cached_result(entry) -> object:
+    """Translate a cache entry into a geocode result, or _MISS to re-query.
+
+    Success entries are [lat, lng]. Failures are {"failed_at": iso} and only
+    count while fresh; a bare None is a failure written before failures carried
+    a timestamp, so it is retried and then rewritten in the new shape.
+    """
+    if isinstance(entry, dict):
+        return (None, None) if _failure_is_fresh(entry) else _MISS
+    if not entry:
+        return _MISS
+    try:
+        return float(entry[0]), float(entry[1])
+    except (TypeError, ValueError, IndexError):
+        return _MISS  # corrupt entry → re-query
+
+
+def save_geocache() -> None:
+    """Persist the address cache (atomic replace); no-op when nothing changed.
+
+    Called at the end of a run and every few flushes, not on every lookup:
+    writing the whole file per address turned a 184-house run into 184 rewrites
+    of a growing JSON file. Expired failures are dropped on the way out.
+    """
+    global _geocache_dirty
+    with _geocache_guard:
+        data = _geocache
+        dirty = _geocache_dirty
+        _geocache_dirty = False
+    if not data or not dirty:
+        return
+    keep = {
+        k: v for k, v in data.items()
+        if not isinstance(v, dict) or _failure_is_fresh(v)
+    }
+    tmp = GEOCACHE_PATH + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(keep, f, ensure_ascii=False)
+        os.replace(tmp, GEOCACHE_PATH)
+    except OSError as e:
+        with _geocache_guard:
+            _geocache_dirty = True  # retry on the next flush
+        logger.warning("No se pudo guardar el geocache %s: %s", GEOCACHE_PATH, e)
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
-async def geocode(address: str) -> Tuple[Optional[float], Optional[float]]:
+async def geocode(address: str, force: bool = False) -> Tuple[Optional[float], Optional[float]]:
     """
     Resolve (lat, lng) for an Argentine address using a Nominatim cascade:
 
+      Step 0 — persistent address cache (skipped when force=True)
       Step 1 — Nominatim, full cleaned address
       Step 2 — Nominatim, street number stripped
       Step 3 — Nominatim, first two address parts only
@@ -224,19 +336,39 @@ async def geocode(address: str) -> Tuple[Optional[float], Optional[float]]:
     if not vs:
         return None, None
 
+    cache = _geocache_load()
+    key = _geocache_key(address)
+    if not force and key in cache:
+        result = _cached_result(cache[key])
+        if result is not _MISS:
+            logger.debug("Geocache %r -> %s", address, result)
+            return result
+
     # Steps 1-3: Nominatim cascade
     for i, variant in enumerate(vs, start=1):
         result = await _nominatim_rl(variant)
         if result:
             logger.info("Nominatim-%d %r -> %s", i, variant, result)
-            return result
+            return _geocache_put(cache, key, result)
 
     # Step 4: OpenCage fallback
     if _OPENCAGE_KEY:
         result = await _opencage(vs[0])
         if result:
             logger.info("OpenCage %r -> %s", vs[0], result)
-            return result
+            return _geocache_put(cache, key, result)
 
     logger.warning("All sources exhausted for %r", address)
-    return None, None
+    # Negative cache (with a TTL, see _NEGATIVE_TTL): retrying this exact test
+    # right away would fail the same way, so the next run skips it instead of
+    # spending 3+ rate-limited requests.
+    return _geocache_put(cache, key, (None, None))
+
+
+def _geocache_put(cache: dict, key: str, result: Tuple[Optional[float], Optional[float]]) -> Tuple[Optional[float], Optional[float]]:
+    """Store a result in the in-memory cache and mark it dirty (see save_geocache)."""
+    global _geocache_dirty
+    cache[key] = [result[0], result[1]] if result[0] is not None else _failure_entry()
+    with _geocache_guard:
+        _geocache_dirty = True
+    return result
