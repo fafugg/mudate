@@ -40,6 +40,13 @@ class Settings:
     default_delay: float = 2.0  # seconds between page requests
     max_pages: int = 500  # safety cap for pagination
 
+    # Optional path to a Chromium binary. Empty = use Playwright's bundled
+    # build. Set it when the bundled download is unavailable (e.g. ARM64
+    # boards using the distro's chromium package).
+    playwright_executable_path: str = field(
+        default_factory=lambda: os.environ.get("PLAYWRIGHT_EXECUTABLE_PATH", "")
+    )
+
     # ── Admin ─────────────────────────────────────────────────────────────────
     max_upload_mb: int = 50
     run_prune_hours: int = 24

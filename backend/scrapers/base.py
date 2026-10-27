@@ -114,7 +114,10 @@ class BaseScraper(ABC):
                 ...
         """
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=headless)
+            browser = await p.chromium.launch(
+                headless=headless,
+                executable_path=settings.playwright_executable_path or None,
+            )
             context = await browser.new_context(
                 user_agent=UA,
                 viewport={"width": 1280, "height": 900},
