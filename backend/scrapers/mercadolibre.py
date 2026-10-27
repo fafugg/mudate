@@ -144,7 +144,8 @@ class MercadoLibreScraper(BaseScraper):
                             total_items,
                         )
 
-                    if not is_known and card.get("url"):
+                    # Always fetch detail pages to get full galleries
+                    if card.get("url"):
                         # Open detail page in a new tab to preserve search page state
                         detail_page = await context.new_page()
                         try:
@@ -408,15 +409,40 @@ _IMAGES_READY_JS = """() => {
 _GALLERY_IMAGES_JS = """() => {
     const out = [];
     const push = (u) => {
-        if (u && u.startsWith('http') && !out.includes(u)) out.push(u);
+        if (!u || typeof u !== 'string') return;
+        if (!u.startsWith('http')) return;
+        if (/\.svg(\?|$)/i.test(u)) return;
+        if (u.includes('photo_placeholder')) return;
+        if (u.includes('similar')) return;
+        if (!out.includes(u)) out.push(u);
     };
+    // New layout
     for (const img of document.querySelectorAll('img.ui-pdp-gallery__figure__image')) {
         push(img.getAttribute('data-zoom') || img.getAttribute('src'));
     }
+    // Legacy layout
     for (const img of document.querySelectorAll('img.gallery-image__image')) {
         push(img.getAttribute('src'));
     }
-    return out.slice(0, 40);
+    // Other possible selectors
+    for (const img of document.querySelectorAll('.ui-pdp-gallery img, .slick-slide img, [class*="gallery"] img')) {
+        push(img.getAttribute('data-zoom') || img.getAttribute('src') || img.getAttribute('data-src'));
+    }
+    // Background images
+    for (const el of document.querySelectorAll('[class*="gallery"] [style*="background"], .ui-pdp-gallery [style*="background"]')) {
+        const style = el.getAttribute('style') || '';
+        const m = style.match(/url\((https?:\/\/[^)]+)\)/);
+        if (m) push(m[1]);
+    }
+    // srcset
+    for (const img of document.querySelectorAll('img')) {
+        const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset') || '';
+        srcset.split(',').forEach(entry => {
+            const parts = entry.trim().split(/\s+/);
+            if (parts[0]) push(parts[0]);
+        });
+    }
+    return out.slice(0, 80);
 }"""
 
 _SPECS_READY_JS = """() => {
@@ -672,6 +698,28 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
             addr_text = await _safe_text(page, "[class*='location'] address, [class*='address'] address")
             if addr_text and len(addr_text) < 200 and "whatsapp" not in addr_text.lower():
                 result["address"] = addr_text
+
+        # Try to interact with gallery to load all images
+        try:
+            # Click to open gallery if there's a gallery button
+            btn = await page.query_selector('button:has-text("Ver todas"), button:has-text("Galería"), .ui-pdp-gallery__thumbnail, [class*="gallery"] button')
+            if btn:
+                await btn.click()
+                await asyncio.sleep(2)
+        except Exception:
+            pass
+        try:
+            await page.evaluate("""async () => {
+                const delay = ms => new Promise(res => setTimeout(res, ms));
+                for (let i = 0; i < 15; i++) {
+                    window.scrollBy(0, window.innerHeight);
+                    await delay(150);
+                }
+                window.scrollTo(0, 0);
+            }""")
+            await asyncio.sleep(1)
+        except Exception:
+            pass
 
         # Extract the gallery images (both PDP layouts — see _GALLERY_IMAGES_JS)
         imgs = await page.evaluate(_GALLERY_IMAGES_JS)

@@ -128,9 +128,8 @@ class ArgenpropScraper(BaseScraper):
             async def _process_card(raw: dict) -> Dict[str, Any]:
                 listing = _parse_card(raw)
                 se_id = listing.get("search_engine_id") or ""
-                is_known = bool(existing_ids and se_id and se_id in existing_ids)
-
-                if not is_known and listing.get("url"):
+                # Always fetch detail pages to get full galleries
+                if listing.get("url"):
                     async with sem:
                         if cancel_check and cancel_check():
                             return {}
@@ -414,32 +413,75 @@ async def _extract_detail_from_dom(page) -> Dict[str, Any]:
     result: Dict[str, Any] = {}
 
     try:
+        # Try to open gallery/lightbox if present to load all images
+        try:
+            # Look for buttons like "Ver todas", "Galería", etc.
+            btn = await page.query_selector('button:has-text("Ver todas"), button:has-text("galería"), [data-testid*="gallery"], .gallery-button, a:has-text("Ver fotos")')
+            if btn:
+                await btn.click()
+                await asyncio.sleep(2)
+        except Exception:
+            pass
+
+        # Scroll to load lazy images
+        try:
+            await page.evaluate("""async () => {
+                const delay = ms => new Promise(res => setTimeout(res, ms));
+                for (let i = 0; i < 10; i++) {
+                    window.scrollBy(0, window.innerHeight);
+                    await delay(200);
+                }
+                window.scrollTo(0, 0);
+            }""")
+            await asyncio.sleep(1)
+        except Exception:
+            pass
+
         # ── Structured extraction via JS ─────────────────────────────────
         data = await page.evaluate(r"""() => {
             const r = {};
-
-            // ── Images from gallery (CSS background-image in data-open-gallery divs)
             const imgs = [];
+
+            function addImg(u) {
+                if (!u || typeof u !== 'string') return;
+                if (!u.startsWith('http')) return;
+                if (/\.svg(\?|$)/i.test(u)) return;
+                if (u.includes('_a/')) return;
+                if (u.includes('photo_placeholder')) return;
+                if (u.includes('similar')) return;
+                if (!imgs.includes(u)) imgs.push(u);
+            }
+
+            // Try multiple gallery selectors
+            // data-open-gallery divs with background-image
             document.querySelectorAll('[data-open-gallery] div[style]').forEach(div => {
                 const style = div.getAttribute('style') || '';
                 const m = style.match(/url\((https?:\/\/[^)]+)\)/);
-                if (m) {
-                    const src = m[1];
-                    if (src.includes('static-content') && !src.includes('_a/') && !src.includes('photo_placeholder')) {
-                        if (!imgs.includes(src)) imgs.push(src);
-                    }
-                }
+                if (m) addImg(m[1]);
             });
-            // Fallback: check ld+json images if gallery extraction yields nothing
-            if (imgs.length === 0) {
-                document.querySelectorAll('img').forEach(i => {
-                    const src = i.src || i.getAttribute('data-src') || '';
-                    if (src.startsWith('http') && src.includes('static-content') && !src.includes('_a/') && !src.includes('similar')) {
-                        if (!imgs.includes(src)) imgs.push(src);
-                    }
+            // Gallery containers
+            document.querySelectorAll('.gallery img, .galeria img, [class*="gallery"] img, [class*="fotos"] img, #gallery img').forEach(i => {
+                addImg(i.src || i.getAttribute('data-src') || i.getAttribute('data-zoom') || '');
+                const srcset = i.getAttribute('srcset') || i.getAttribute('data-srcset') || '';
+                srcset.split(',').forEach(entry => {
+                    const parts = entry.trim().split(/\s+/);
+                    if (parts[0]) addImg(parts[0]);
                 });
-            }
-            r.images = imgs.slice(0, 40);
+            });
+            // Background images in gallery elements
+            document.querySelectorAll('[class*="gallery"] [style*="background"], [class*="slider"] [style*="background"], .swiper-slide [style*="background"]').forEach(el => {
+                const style = el.getAttribute('style') || '';
+                const m = style.match(/url\((https?:\/\/[^)]+)\)/);
+                if (m) addImg(m[1]);
+            });
+            // All imgs with static-content
+            document.querySelectorAll('img').forEach(i => {
+                addImg(i.src || '');
+                addImg(i.getAttribute('data-src') || '');
+                addImg(i.getAttribute('data-zoom') || '');
+            });
+
+            r.images = imgs.slice(0, 80);
 
             // ── Property specs from main features ─────────────────────────
             const mainFeatures = {};

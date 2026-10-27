@@ -13,6 +13,7 @@ from playwright.async_api import async_playwright
 from contextlib import asynccontextmanager
 
 from .base import BaseScraper, ScrapeBlockedError, UA, normalize_phone, parse_price
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +246,7 @@ class ZonapropScraper(BaseScraper):
             context = await p.chromium.launch_persistent_context(
                 user_data_dir=_PROFILE_DIR,
                 headless=_HEADLESS,
+                executable_path=settings.playwright_executable_path or None,
                 user_agent=UA,
                 viewport={"width": 1280, "height": 900},
                 locale="es-AR",
@@ -305,9 +307,8 @@ class ZonapropScraper(BaseScraper):
 
                 listing = _parse_card(raw)
                 se_id    = listing.get("search_engine_id") or ""
-                is_known = bool(existing_ids and se_id and se_id in existing_ids)
-
-                if not is_known and listing.get("url"):
+                # Always fetch detail pages to get full galleries
+                if listing.get("url"):
                     async with sem:
                         if cancel_check and cancel_check():
                             return {}
@@ -1152,28 +1153,106 @@ def _get_images(soup: BeautifulSoup, ld: dict) -> Optional[List[str]]:
     before calling page.content(), so all images are present in the HTML.
     """
     def is_photo(url: str) -> bool:
-        return bool(url and url.startswith("http") and not re.search(r"\.svg(\?|$)", url, re.I))
+        return bool(url and isinstance(url, str) and url.startswith("http") and not re.search(r"\.svg(\?|$)", url, re.I))
 
-    # Primary: <img> tags inside the gallery portal.
-    # wait_for_function in _scrape_detail ensures src is set on every image
-    # before page.content() is called, so src is the only attribute we need.
+    def extract_url(item):
+        if isinstance(item, str):
+            return item
+        if isinstance(item, dict):
+            for k in ("url", "src", "image", "fullUrl", "imageUrl", "urlImage", "uri", "href"):
+                v = item.get(k)
+                if isinstance(v, str):
+                    return v
+        return ""
+
     collected: List[str] = []
     media_root = soup.find(id="multimedia-content") or soup.find(id="new-gallery-portal")
+
     if media_root:
+        # <img> tags (including srcset)
         for img in media_root.find_all("img"):
-            src = img.get("src") or ""
-            if is_photo(src) and src not in collected:
-                collected.append(src)
+            for attr in ["src", "data-src", "data-lazy-src", "currentSrc"]:
+                src = img.get(attr) or ""
+                if src and is_photo(src) and src not in collected:
+                    collected.append(src)
+            for attr in ["srcset", "data-srcset"]:
+                srcset = img.get(attr) or ""
+                if not srcset:
+                    continue
+                for entry in srcset.split(","):
+                    parts = entry.strip().split()
+                    if parts and is_photo(parts[0]) and parts[0] not in collected:
+                        collected.append(parts[0])
+
+        # background-image divs
+        for el in media_root.find_all(class_=re.compile(r"imageGrid-module__imgProperty", re.I)):
+            style = el.get("style") or ""
+            # simple extraction
+            if 'url(' in style:
+                try:
+                    start = style.find('url(') + 4
+                    # skip quotes
+                    if style[start] in ("'", '"'):
+                        start += 1
+                    end = style.find(")", start)
+                    if end == -1: continue
+                    url_cand = style[start:end].strip().strip("'").strip('"')
+                    if is_photo(url_cand) and url_cand not in collected:
+                        collected.append(url_cand)
+                except Exception:
+                    pass
+            for attr in ["data-src", "data-url", "data-image"]:
+                v = el.get(attr) or ""
+                if v and is_photo(v) and v not in collected:
+                    collected.append(v)
+
+    # Try __NEXT_DATA__ for full gallery
+    if not collected:
+        try:
+            nd_tag = soup.find("script", id="__NEXT_DATA__")
+            if nd_tag and nd_tag.string:
+                nd = json.loads(nd_tag.string)
+                def find_photo_arrays(obj, depth=0):
+                    if depth > 12 or not isinstance(obj, (dict, list)):
+                        return []
+                    if isinstance(obj, list):
+                        urls = [u for u in map(extract_url, obj) if is_photo(u)]
+                        found = [urls] if len(urls) > 1 else []
+                        for v in obj:
+                            found.extend(find_photo_arrays(v, depth + 1))
+                        return found
+                    results = []
+                    for v in obj.values():
+                        results.extend(find_photo_arrays(v, depth + 1))
+                    return results
+                candidates = find_photo_arrays(nd)
+                if candidates:
+                    best = max(candidates, key=len)
+                    for u in best:
+                        if u not in collected:
+                            collected.append(u)
+        except Exception:
+            pass
 
     if collected:
         return _dedupe_images(collected)
 
-    # Fallback: ld+json image field (single image or list)
+    # Fallback: ld+json
     img_data = ld.get("image")
     if isinstance(img_data, str) and is_photo(img_data):
         return [img_data]
     if isinstance(img_data, list):
-        return [i for i in img_data if isinstance(i, str) and is_photo(i)][:40]
+        result = []
+        for i in img_data:
+            if isinstance(i, str) and is_photo(i):
+                result.append(i)
+            elif isinstance(i, dict):
+                for k in ("url", "contentUrl"):
+                    u = i.get(k)
+                    if isinstance(u, str) and is_photo(u):
+                        result.append(u)
+                        break
+        return result[:40] if result else None
     return None
 
 

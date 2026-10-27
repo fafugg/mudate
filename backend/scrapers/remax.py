@@ -169,11 +169,11 @@ class RemaxScraper(BaseScraper):
                             len(results) + len(card_listings),
                         )
 
-                    if not is_known:
-                        entity_id = card.get("_entity_id")
-                        if entity_id:
-                            detail = await _fetch_detail_api(entity_id)
-                            card.update({k: v for k, v in detail.items() if v is not None})
+                    # Always fetch detail pages to get full galleries
+                    entity_id = card.get("_entity_id")
+                    if entity_id:
+                        detail = await _fetch_detail_api(entity_id)
+                        card.update({k: v for k, v in detail.items() if v is not None})
 
                     card["price_per_m2"] = self.compute_price_per_m2(
                         card.get("price"), card.get("covered_m2") or card.get("total_m2")
@@ -344,7 +344,7 @@ def _parse_remax_listing(item: dict) -> Optional[Dict[str, Any]]:
                                     images.append(f"{REMAX_CDN}{raw}")
                             else:
                                 images.append(f"{REMAX_CDN}{raw}")
-        images = images[:40] if images else None
+        images = images[:80] if images else None
 
         # Lat/Lng
         location = item.get("location", {})
@@ -474,29 +474,32 @@ async def _fetch_detail_api(entity_id: str) -> Dict[str, Any]:
 
             # Photos (full resolution from detail API)
             # Remax rawValue is missing resolution and .webp extension
-            photos = listing.get("photos", [])
+            photos = listing.get("photos", []) or listing.get("images", []) or []
             if isinstance(photos, list) and photos:
                 images = []
                 for photo in photos:
-                    if isinstance(photo, dict):
-                        raw = photo.get("rawValue", "")
-                        if raw:
-                            if raw.startswith("http"):
-                                images.append(raw)
-                            else:
-                                # Add resolution and .webp extension if missing
-                                if not raw.endswith(".webp"):
-                                    parts = raw.split("/")
-                                    if len(parts) >= 3:
-                                        entity_id_part = parts[1]
-                                        hash_part = parts[2]
-                                        images.append(f"{REMAX_CDN}listings/{entity_id_part}/860x440/{hash_part}.webp")
-                                    else:
-                                        images.append(f"{REMAX_CDN}{raw}")
+                    if isinstance(photo, str):
+                        raw = photo
+                    elif isinstance(photo, dict):
+                        raw = photo.get("rawValue") or photo.get("url") or photo.get("image") or photo.get("src") or ""
+                    else:
+                        continue
+                    if raw:
+                        if raw.startswith("http"):
+                            images.append(raw)
+                        else:
+                            if not raw.endswith(".webp"):
+                                parts = raw.split("/")
+                                if len(parts) >= 3:
+                                    entity_id_part = parts[1]
+                                    hash_part = parts[2]
+                                    images.append(f"{REMAX_CDN}listings/{entity_id_part}/860x440/{hash_part}.webp")
                                 else:
                                     images.append(f"{REMAX_CDN}{raw}")
+                            else:
+                                images.append(f"{REMAX_CDN}{raw}")
                 if images:
-                    result["images"] = images[:40]
+                    result["images"] = images[:80]
 
             # Agent phone
             associate = listing.get("associate", {})
