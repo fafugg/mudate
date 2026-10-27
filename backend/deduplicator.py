@@ -39,19 +39,26 @@ def _token_set(s: str) -> set:
     return set(_normalize(s).split())
 
 
-def _address_similarity(a: str, b: str) -> float:
-    ta = _token_set(a or "")
-    tb = _token_set(b or "")
+def _sim_sets(ta: set, tb: set) -> float:
+    """Jaccard similarity of two PRECOMPUTED token sets.
+
+    Same rules as _address_similarity(): empty side → 0, intersection made only
+    of digits → 0. Precomputing the sets turns every pairwise comparison from
+    two full normalizations (~100 µs each) into a set intersection (~1 µs).
+    """
     if not ta or not tb:
         return 0.0
     inter = ta & tb
-    union = ta | tb
     if not inter:
         return 0.0
-    has_nonnumeric = any(not t.isdigit() for t in inter)
-    if not has_nonnumeric:
+    if not any(not t.isdigit() for t in inter):
         return 0.0
-    return len(inter) / len(union) if union else 0.0
+    union = ta | tb
+    return len(inter) / len(union)
+
+
+def _address_similarity(a: str, b: str) -> float:
+    return _sim_sets(_token_set(a or ""), _token_set(b or ""))
 
 
 def _within_tolerance(a: Optional[float], b: Optional[float], pct: float) -> bool:
@@ -122,19 +129,40 @@ def find_duplicates(session: dict, username: str) -> List[dict]:
     n = len(raw)
     matched: Dict[int, set] = {i: {i} for i in range(n)}
 
+    # Precompute once per house: engine, address tokens and whether the address
+    # is present. The old loop re-normalized BOTH addresses inside every one of
+    # the n(n-1)/2 pairs — 570k pairs ≈ 1.78 s for a 1067-house session.
+    engines: List[str] = []
+    token_sets: List[set] = []
+    for _, h in houses:
+        addr = h.get("manual_address") or h.get("address") or ""
+        engines.append(h.get("search_engine", ""))
+        token_sets.append(_token_set(addr) if addr else set())
+
+    # Lossless blocking: two addresses can only reach a Jaccard score ≥ 0.75
+    # if they share at least one token, so pairs with no token in common are
+    # skipped without changing the result. Only candidates from the inverted
+    # index are compared, each pair exactly once (j > i).
+    index: Dict[str, List[int]] = {}
+    for i, ts in enumerate(token_sets):
+        for t in ts:
+            index.setdefault(t, []).append(i)
+
     for i in range(n):
-        for j in range(i + 1, n):
+        if not token_sets[i]:
+            continue
+        candidates: set = set()
+        for t in token_sets[i]:
+            for j in index[t]:
+                if j > i:
+                    candidates.add(j)
+        for j in sorted(candidates):
+            if engines[i] == engines[j]:
+                continue
+            if _sim_sets(token_sets[i], token_sets[j]) < _SIMILARITY_THRESHOLD:
+                continue
+
             hi, hj = raw[i], raw[j]
-            if hi.get("search_engine") == hj.get("search_engine"):
-                continue
-
-            addr_i = hi.get("manual_address") or hi.get("address") or ""
-            addr_j = hj.get("manual_address") or hj.get("address") or ""
-            if not addr_i or not addr_j:
-                continue
-            if _address_similarity(addr_i, addr_j) < _SIMILARITY_THRESHOLD:
-                continue
-
             if not _within_tolerance(hi.get("price"), hj.get("price"), _PRICE_TOLERANCE):
                 continue
 

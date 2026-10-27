@@ -11,7 +11,8 @@ from typing import Any, Dict, List, Optional
 
 from storage import _now, atomic_update, read_db
 from deduplicator import (
-    _address_similarity,
+    _sim_sets,
+    _token_set,
     _within_tolerance,
     _SIMILARITY_THRESHOLD,
     _PRICE_TOLERANCE,
@@ -94,25 +95,45 @@ def find_same_engine_duplicates(
         engine_new = new_by_engine[engine]
 
         # Build match graph
-        n_removed = len(engine_removed)
-        n_new = len(engine_new)
         matched_pairs: List[tuple] = []
+
+        # Precompute the NEW side once: address tokens + an inverted index.
+        # The old code re-normalized both addresses for every removed×new pair
+        # (1.50 s in manual mode over the current session). Lossless blocking:
+        # Jaccard ≥ 0.75 requires a shared token, so candidates without one can
+        # be skipped without changing the result.
+        new_tokens: List[set] = []
+        new_index: Dict[str, List[int]] = {}
+        for _, nh in engine_new:
+            addr_n = nh.get("manual_address") or nh.get("address") or ""
+            ts = _token_set(addr_n) if addr_n else set()
+            idx = len(new_tokens)
+            new_tokens.append(ts)
+            for t in ts:
+                new_index.setdefault(t, []).append(idx)
 
         for ri, (rh_id, rh) in enumerate(engine_removed):
             addr_r = rh.get("manual_address") or rh.get("address") or ""
+            if not addr_r:
+                continue
+            ts_r = _token_set(addr_r)
+            if not ts_r:
+                continue
             price_r = rh.get("price")
             m2_r = rh.get("total_m2") or rh.get("covered_m2")
 
-            for ni, (nh_id, nh) in enumerate(engine_new):
-                addr_n = nh.get("manual_address") or nh.get("address") or ""
+            candidates: set = set()
+            for t in ts_r:
+                for ni in new_index.get(t, ()):
+                    candidates.add(ni)
+
+            for ni in sorted(candidates):
+                if _sim_sets(ts_r, new_tokens[ni]) < _SIMILARITY_THRESHOLD:
+                    continue
+
+                nh_id, nh = engine_new[ni]
                 price_n = nh.get("price")
                 m2_n = nh.get("total_m2") or nh.get("covered_m2")
-
-                if not addr_r or not addr_n:
-                    continue
-
-                if _address_similarity(addr_r, addr_n) < _SIMILARITY_THRESHOLD:
-                    continue
 
                 if not _within_tolerance(price_r, price_n, _PRICE_TOLERANCE):
                     continue

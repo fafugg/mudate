@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -13,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 from fastapi import BackgroundTasks, Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -70,6 +72,53 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Performance middlewares ───────────────────────────────────────────────────
+# Registration order matters: Starlette's last-added middleware ends up
+# outermost, so ETag is registered first (inner — it hashes the raw JSON) and
+# GZip second (outer — it compresses whatever the ETag layer produced).
+
+
+@app.middleware("http")
+async def _etag_middleware(request, call_next):
+    """Weak ETag on GET JSON responses: unchanged payloads answer 304.
+
+    The session payload is 1.7–2.6 MB; polling endpoints (runs, sessions)
+    re-sent it in full even when nothing changed. Cache-Control: no-cache tells
+    clients to revalidate before reusing a stored copy — which is what makes the
+    conditional request (and therefore the 304) happen at all.
+    """
+    if request.method != "GET":
+        return await call_next(request)
+    response = await call_next(request)
+    if response.status_code != 200:
+        return response
+    if "application/json" not in response.headers.get("content-type", ""):
+        return response
+    if response.headers.get("content-disposition", "").startswith("attachment"):
+        # /api/admin/export-db: a 6 MB backup must stream, not be buffered and
+        # rebuilt in memory just to hash it. (isinstance() is no help here —
+        # BaseHTTPMiddleware hands back a _StreamingResponse, not the original
+        # FileResponse.)
+        return response
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    etag = 'W/"' + hashlib.sha256(body).hexdigest()[:32] + '"'
+    headers = {"etag": etag, "cache-control": "no-cache"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    headers.update(dict(response.headers))
+    headers["etag"] = etag
+    return Response(
+        content=body,
+        status_code=response.status_code,
+        headers=headers,
+        background=response.background,
+    )
+
+
+# uvicorn serves everything uncompressed by default: index.html went over the
+# wire as 132 KB (≈24 KB gzipped), app.js as 52 KB (≈13 KB).
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 # ── Users & sessions ─────────────────────────────────────────────────────────
@@ -334,7 +383,9 @@ async def dedup_preview(username: str, session_id: str):
     username = _validate_username(username)
     db = read_db()
     session = _session_or_404(db, username, session_id)
-    groups = find_duplicates(session, username)
+    # CPU-bound (O(N²) over up to ~1000 houses): run in a thread so the event
+    # loop — and the run/geocode polling — keeps serving requests meanwhile.
+    groups = await asyncio.to_thread(find_duplicates, session, username)
     return {"groups": groups}
 
 
@@ -344,7 +395,7 @@ async def dedup_apply(username: str, session_id: str, body: DedupApplyRequest = 
     username = _validate_username(username)
     db = read_db()
     session = _session_or_404(db, username, session_id)
-    all_groups = find_duplicates(session, username)
+    all_groups = await asyncio.to_thread(find_duplicates, session, username)
     if body.selected_groups is not None:
         groups = [all_groups[i] for i in body.selected_groups if 0 <= i < len(all_groups)]
     else:
@@ -366,7 +417,7 @@ async def same_engine_dedup_preview(username: str, session_id: str):
     username = _validate_username(username)
     db = read_db()
     session = _session_or_404(db, username, session_id)
-    groups = find_same_engine_duplicates(session, username)
+    groups = await asyncio.to_thread(find_same_engine_duplicates, session, username)
     return {"groups": groups}
 
 
@@ -383,7 +434,7 @@ async def same_engine_dedup_apply(
     username = _validate_username(username)
     db = read_db()
     session = _session_or_404(db, username, session_id)
-    all_groups = find_same_engine_duplicates(session, username)
+    all_groups = await asyncio.to_thread(find_same_engine_duplicates, session, username)
     if body.selected_groups is not None:
         groups = [all_groups[i] for i in body.selected_groups if 0 <= i < len(all_groups)]
     else:
@@ -443,11 +494,12 @@ async def import_db(file: UploadFile = File(...)):
             "¿Es realmente un backup de Mudate?",
         )
 
-    # 4. Atomic replace
+    # 4. Atomic replace. Compact like atomic_update() writes it, so the file
+    # has one format whether it came from a restore or from a save.
     with tempfile.NamedTemporaryFile(
         mode="w", encoding="utf-8", dir=os.path.dirname(DB_PATH), delete=False
     ) as tmp:
-        json.dump(data, tmp, ensure_ascii=False, indent=2)
+        json.dump(data, tmp, ensure_ascii=False)
         tmp_path = tmp.name
     os.replace(tmp_path, DB_PATH)
 
