@@ -9,7 +9,19 @@ Provides type-safe schemas for all API endpoints, enabling:
 from datetime import datetime
 from typing import Any, Dict, List, Optional, TypedDict
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# The review values the UI offers (frontend/constants.js — REVIEW_OPTIONS).
+# "" means "a revisar" (no decision yet).
+VALID_REVIEWS = ("", "en_duda", "interesante", "contactar", "descartada", "duplicado")
+
+
+def _check_review(value: Optional[str]) -> Optional[str]:
+    if value is None or value in VALID_REVIEWS:
+        return value
+    raise ValueError(
+        "review must be one of: " + ", ".join(repr(v) for v in VALID_REVIEWS)
+    )
 
 
 # ── Domain Types ──────────────────────────────────────────────────────────────
@@ -100,6 +112,21 @@ class UpdateHouseRequest(BaseModel):
     review: Optional[str] = Field(None, description="Review status: '', en_duda, interesante, contactar, descartada, duplicado")
     notes: Optional[str] = Field(None, description="Free-text notes about the property")
     manual_address: Optional[str] = Field(None, description="Manually corrected address for geocoding")
+
+    _validate_review = field_validator("review")(_check_review)
+
+
+class BulkReviewRequest(BaseModel):
+    """Request body for PATCH /api/houses/bulk — same review on many houses in ONE write.
+
+    The old flow fired one PATCH per house; each PATCH rewrote the whole
+    db.json (50 houses ≈ 4.3 s and 320 MB of disk writes).
+    """
+    house_ids: List[str] = Field(..., description="internal_ids of the houses to update")
+    review: str = Field(..., description="Review status: '', en_duda, interesante, contactar, descartada, duplicado")
+
+    # A typo here would be stamped on every selected house at once.
+    _validate_review = field_validator("review")(_check_review)
 
 
 # ── Response Models ───────────────────────────────────────────────────────────

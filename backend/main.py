@@ -23,6 +23,7 @@ from scheduler import get_scheduler_status, setup_scheduler
 from deduplicator import apply_dedup, find_duplicates
 from same_engine_dedup import apply_same_engine_dedup, find_same_engine_duplicates
 from schemas import (
+    BulkReviewRequest,
     CreateSessionRequest,
     DedupApplyRequest,
     DedupApplyResponse,
@@ -192,6 +193,24 @@ async def run_session(
         runs=runs,
     )
     return {"run_id": run_id}
+
+
+@app.patch("/api/houses/bulk", response_model=OkResponse)
+async def bulk_update_houses(body: BulkReviewRequest):
+    """Actualiza el review de varias propiedades en UNA sola escritura.
+
+    Registered before /api/houses/{house_id} so "bulk" isn't swallowed by the
+    path parameter. One PATCH per house meant N full rewrites of db.json
+    (~4 s and 320 MB of writes for 50 selected houses).
+    """
+    if body.house_ids:
+        def update(db: dict):
+            for hid in body.house_ids:
+                house = db["houses"].get(hid)
+                if house is not None:
+                    house["review"] = body.review
+        atomic_update(update)
+    return {"ok": True}
 
 
 @app.patch("/api/houses/{house_id}", response_model=OkResponse)
