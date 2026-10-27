@@ -164,14 +164,18 @@ If an address fails to geocode, you can enter a corrected address manually in th
 
 #### Selecting multiple pins (desktop only)
 
-**Ctrl**+click (or **Cmd**+click on macOS) a pin to add it to a selection instead of opening the detail panel; Ctrl+click it again to remove it. Selected pins keep their review color and gain a blue ring and a larger radius. While one or more pins are selected, the bulk-action bar appears above the map:
+**Ctrl**+click (or **Cmd**+click on macOS) a pin to add it to a selection instead of opening the detail panel; Ctrl+click it again to remove it. Selected pins keep their review color and gain a blue ring and a larger radius.
+
+To select a whole area at once, **Ctrl+drag** (or **Cmd+drag**) on the map: a dashed blue rectangle follows the pointer and, on release, every pin whose centre falls inside it is added to the selection — the same rubber-band gesture as dragging a box on the Windows desktop. The selection is additive, like Ctrl+click, so consecutive boxes accumulate; use **Limpiar** or **Esc** to start over. Dragging without the modifier still pans the map as usual, a drag never zooms, and a drag of only a few pixels (a jittery Ctrl+click) is ignored so it cannot wipe out an intended click. Pressing **Esc** while the rectangle is being drawn cancels just that drag and leaves the existing selection untouched.
+
+Only pins that pass the active filters can be selected, so the box respects whatever you have filtered on screen. While one or more pins are selected, the bulk-action bar appears above the map:
 
 - **Revisión** — batch-apply a review status to every selected property; pins recolor immediately and a toast confirms the count.
 - **Comparar** — open the side-by-side comparison modal (2–5 properties).
 - **Todo lo visible** — add every pin inside the current viewport to the selection.
 - **Limpiar** or **Esc** — clear the selection.
 
-The selection is shared with the table view: properties selected on the map appear as checked rows in the table and vice versa. Touch devices always open the detail panel on tap; the modifier-click path ignores touch-origin events.
+The selection is shared with the table view: properties selected on the map appear as checked rows in the table and vice versa. Touch devices always open the detail panel on tap, and the modifier paths ignore touch-origin events; the box gesture needs a real Ctrl/Cmd key, so it cannot trigger from touch.
 
 ### 7. Export
 

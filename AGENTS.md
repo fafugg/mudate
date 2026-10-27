@@ -90,12 +90,12 @@ mudate/
 | **Price history** | Every price change recorded per property; % change shown in table |
 | **Publish tracking** | `first_published_at` (original post date, stable across re-posts/merges) + `republish_count`; "Antigüedad" column and detail-panel age in days |
 | **Geocoding** | Nominatim (pipelined rate limiter) → OpenCage fallback; manual address override |
-| **Interactive map** | Leaflet + OSM; color-coded pins by review status; fly-to on click; canvas rendering; Ctrl/Cmd+click multi-select on desktop |
+| **Interactive map** | Leaflet + OSM; color-coded pins by review status; fly-to on click; canvas rendering; Ctrl/Cmd+click multi-select and Ctrl/Cmd+drag rubber-band (box) selection on desktop |
 | **Review system** | A revisar / En duda / Interesante / Descartada / Contactar / Duplicado |
 | **Filter & sort** | By review, type, status, price range, address, real estate, notes, provider, price changes |
 | **Cross-engine dedup** | Fuzzy address matching (Jaccard ≥ 0.75) with price/m² tolerance |
 | **Same-engine dedup** | Reactivation detection: merges re-listed properties from the same portal |
-| **Bulk actions** | Multi-select via table checkboxes or Ctrl+click on map pins (desktop); batch review + compare (2-5 properties side by side) |
+| **Bulk actions** | Multi-select via table checkboxes, Ctrl+click on map pins, or Ctrl+drag a box over the map (desktop); batch review + compare (2-5 properties side by side) |
 | **Export CSV** | Respects active filters; includes BOM for Excel |
 | **Export/Import DB** | Full db.json backup & restore via admin UI |
 | **Auto-refresh** | APScheduler re-scrapes all sessions daily at 08:00 ART |
@@ -148,6 +148,8 @@ Deduplication: houses with same `search_engine_id` or URL across sessions are me
 4. **Optimistic UI** — review/notes saved optimistically and patched in background
 5. **Pipelined Nominatim rate limiter** — lock held only to claim send-time slot, released before HTTP call (~2x throughput)
 6. **Single source of truth for house fields** — `house_fields.py` owns every rule for mutable fields, publication dates and the re-post counter; no other module re-implements them. Merging is shrink-proof for galleries: a search-card thumbnail (MercadoLibre: 1 image, Argenprop: ≤5) can never replace or wipe the detail-page images stored for a house
+7. **Marquee selection intercepts at `document` capture** — Leaflet binds its pan handler to the map container and, on mousedown, attaches its own `mousemove` to `document`; `stopPropagation` from a container listener is too late, so the Ctrl/Cmd+drag handler listens on `document` in the capture phase and calls `stopImmediatePropagation()` on mousedown/mousemove/mouseup, with `dragging.disable()` and re-enable deferred to a `setTimeout(…, 0)` so no residual pan applies. Leaflet's stock `boxZoom` is disabled (`boxZoom: false`) to keep the gesture unambiguous
+8. **Leaflet handles never enter Alpine's reactive graph** — everything stored on the Alpine component is wrapped in a Vue reactive proxy, and Leaflet compares listener contexts by identity (`Evented._off` skips an entry when `l.ctx !== context`). A raw-vs-proxy mismatch silently skips the unbind: a marker tooltip opened just before the detail panel kept its `zoomanim` listener with `_map === null` and the next zoom threw `TypeError: Cannot read properties of null (reading '_latLngToNewLayerPoint')`. `frontend/map.js` marks the map, the marker layer, every marker, its tooltip and the saved center with `markRaw()` (Vue's `__v_skip` flag, Alpine ships `@vue/reactivity` without exposing `markRaw`), so they stay raw however they are read back
 
 ### Key Backend Files
 
@@ -186,6 +188,12 @@ Deduplication: houses with same `search_engine_id` or URL across sessions are me
 | `frontend/app.js:417-445` | `selectSession()` — loads session data from API |
 | `frontend/app.js:481-516` | `triggerRun()` / `startPolling()` / `pollRun()` — scrape lifecycle |
 | `frontend/app.js:841-867` | `exportCsv()` — CSV export with BOM |
-| `frontend/map.js:1-292` | `mapMethods` — Leaflet map, pins, geocoding poll |
-| `frontend/map.js:27-36` | `initMap()` — initializes Leaflet map |
-| `frontend/map.js:38-85` | `renderPins()` — color-coded circle markers by review status |
+| `frontend/map.js:4-17` | `markRaw()` — keeps Leaflet handles out of Alpine's reactive proxies (see design decision 8) |
+| `frontend/map.js:51-71` | `_loadLeaflet()` — lazy, SRI-pinned Leaflet CSS/JS load |
+| `frontend/map.js:73-127` | `initMap()` — initializes Leaflet map (`boxZoom` off), restores view, binds the marquee |
+| `frontend/map.js:129-236` | `renderPins()` — incremental color-coded circle markers by review status; defers while panning |
+| `frontend/map.js:289-299` | `toggleMapPin()` — Ctrl/Cmd+click toggle (shared selection) |
+| `frontend/map.js:301-465` | `_initBoxSelect()` / `_updateBoxEl()` / `_cancelBoxSelect()` / `_applyBoxSelection()` — Ctrl/Cmd+drag rubber-band selection |
+| `frontend/map.js:467-484` | `selectVisibleInViewport()` — "Todo lo visible" |
+| `frontend/map.js:506-518` | `_watchBulkBar()` — `ResizeObserver` so the map refills when the bulk bar leaves |
+| `frontend/map.js:520-553` | `destroyMap()` — tears down map, marquee and observers on table view |

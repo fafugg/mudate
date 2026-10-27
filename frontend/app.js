@@ -1004,6 +1004,12 @@ function app() {
     // Esc clears the selection, but only when nothing else is using Esc:
     // open detail panel / lightbox / modals / focused form fields come first.
     maybeClearSelectionOnEsc() {
+      // A half-drawn Ctrl+drag marquee is cancelled first, leaving the
+      // selection untouched (pressing Esc mid-drag should abort the drag).
+      if (this._boxDragging) {
+        this._cancelBoxSelect();
+        return;
+      }
       if (!this.selectedHouses.length) return;
       if (this.detailHouse || this.lightboxImg || this.compareHouses.length) return;
       if (this.modalType !== null || this.showManualAddressModal || this.showShortcuts) return;
