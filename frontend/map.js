@@ -1,6 +1,19 @@
 // ── Map & geocoding state and methods ─────────────────────────────────────────
 // Spread into the Alpine component returned by app() in app.js.
 
+// Anything stored on the Alpine component is wrapped in a Vue reactive proxy.
+// Leaflet compares event-listener contexts by identity (Evented._off does
+// `l.ctx !== context`), so a raw-vs-proxy mismatch silently fails to unbind an
+// event: a tooltip that was open when the detail panel opened kept its
+// `zoomanim` listener alive with `_map === null`, and the next zoom threw
+// "Cannot read properties of null (reading '_latLngToNewLayerPoint')".
+// `__v_skip` is Vue's markRaw flag (Alpine bundles @vue/reactivity but does not
+// expose markRaw), so Leaflet handles stay raw however they are read back.
+const markRaw = (obj) => {
+  if (obj && typeof obj === 'object') obj.__v_skip = true;
+  return obj;
+};
+
 const mapMethods = {
   mapView: false,
   _map: null,
@@ -22,6 +35,14 @@ const mapMethods = {
   _mapFocusHouse: null,
   _focusActive: false,
   _markerMap: {},
+  // Ctrl+drag rubber-band selection (desktop only).
+  _boxEl: null,
+  _boxStart: null,
+  _boxCurrent: null,
+  _boxDragging: false,
+  _boxMoved: false,
+  _boxSwallowClick: false,
+  _boxHandlers: null,
   mapMissingCount: 0,
   mapLegend: MAP_LEGEND,
   _leafletPromise: null,
@@ -74,7 +95,9 @@ const mapMethods = {
     const start = (this._savedCenter && this._savedZoom)
       ? { center: this._savedCenter, zoom: this._savedZoom }
       : { center: [-34.61, -58.44], zoom: 12 };
-    this._map = L.map('map', { preferCanvas: true }).setView(start.center, start.zoom);
+    // boxZoom (Leaflet's Shift+drag "zoom to box") is disabled: the same
+    // gesture is repurposed as a Ctrl+drag rubber-band selection below.
+    this._map = markRaw(L.map('map', { preferCanvas: true, boxZoom: false }).setView(start.center, start.zoom));
     if (this._savedCenter && this._savedZoom) {
       // Restoring a previously positioned map: don't let auto-fit override it.
       this._mapUserMoved = true;
@@ -100,6 +123,7 @@ const mapMethods = {
       this._map?.invalidateSize({ animate: false });
       this.renderPins();
     });
+    this._initBoxSelect();
   },
 
   renderPins() {
@@ -111,7 +135,7 @@ const mapMethods = {
       return;
     }
     if (!this._markerLayer) {
-      this._markerLayer = L.layerGroup().addTo(this._map);
+      this._markerLayer = markRaw(L.layerGroup().addTo(this._map));
     }
 
     const all = this.filteredHouses;
@@ -141,10 +165,11 @@ const mapMethods = {
         );
       } else {
         // Create new marker
-        const marker = L.circleMarker([h.lat, h.lng], this.markerStyle(h));
+        const marker = markRaw(L.circleMarker([h.lat, h.lng], this.markerStyle(h)));
         marker.bindTooltip(
           `<b>${this.escHtml(h.manual_address || h.address || '')}</b><br>${this.escHtml(this.formatPrice(h.price, h.currency))}`
         );
+        markRaw(marker._tooltip);
         // Desktop multi-select: Ctrl/Cmd+click toggles the pin in/out of the
         // shared selection instead of opening the detail panel. Real touch
         // events are excluded (some touch devices emulate ctrl on long-press);
@@ -266,6 +291,177 @@ const mapMethods = {
     this.refreshMarkerStyle(id);
   },
 
+  // ── Ctrl+drag rubber-band selection (desktop) ──────────────────────────────
+  // Drags a marquee over the map and adds every pin whose centre falls inside
+  // it — the Windows-Explorer drag-box behaviour. Leaflet's own Shift+drag
+  // boxZoom is disabled at map creation so the gesture is unambiguous.
+  //
+  // Like Ctrl+click this requires a real modifier, so it can never fire from
+  // touch or from a plain drag (which must keep panning the map).
+  _initBoxSelect() {
+    if (this._boxHandlers || !this._map) return;
+    const container = this._map.getContainer();
+
+    // The marquee is a plain absolutely-positioned div inside the map
+    // container. pointer-events:none so it never swallows the mouseup that
+    // ends the drag.
+    const el = document.createElement('div');
+    el.className = 'leaflet-zoom-box';
+    el.style.cssText = 'position:absolute;display:none;z-index:800;pointer-events:none;'
+      + 'border:2px dashed #1d4ed8;background:rgba(29,78,216,0.10);border-radius:2px;';
+    container.appendChild(el);
+    this._boxEl = el;
+
+    const modifiersHeld = (e) => e.ctrlKey || e.metaKey;
+    const isTouch = (e) => e.pointerType === 'touch';
+
+    const onDown = (e) => {
+      // Any mousedown invalidates a pending click-swallow (see onClick).
+      this._boxSwallowClick = false;
+      // Left button + Ctrl/Cmd only; touch and plain drags fall through to
+      // Leaflet's panning handler untouched.
+      if (e.button !== 0 || !modifiersHeld(e) || isTouch(e)) return;
+      if (!container.contains(e.target)) return;
+      // Never hijack the zoom control / attribution links: Ctrl+click on those
+      // should still work as a normal click.
+      if (e.target.closest?.('.leaflet-control')) return;
+      if (!this._map) return;
+      e.preventDefault();
+      // stopImmediatePropagation (not stopPropagation): Leaflet's own pan
+      // handler is a *sibling* listener on this same node, so plain
+      // stopPropagation would still let it start a pan and bind its document
+      // mousemove — which then nudged the map a few metres mid-marquee.
+      e.stopImmediatePropagation();
+      // Ctrl+drag also pans by default; stop it so the map doesn't move while
+      // the marquee is being drawn.
+      this._map?.dragging?.disable();
+      const pt = this._map.mouseEventToContainerPoint(e);
+      this._boxStart = pt;
+      this._boxCurrent = pt;
+      this._boxDragging = true;
+      this._boxMoved = false;
+      if (this._boxEl) this._boxEl.style.display = 'block';
+      this._updateBoxEl();
+    };
+
+    const onMove = (e) => {
+      if (!this._boxDragging) return;
+      if (!this._map) return;   // map torn down mid-drag
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      this._boxCurrent = this._map.mouseEventToContainerPoint(e);
+      if (this._boxStart
+        && (Math.abs(this._boxCurrent.x - this._boxStart.x) >= 5
+          || Math.abs(this._boxCurrent.y - this._boxStart.y) >= 5)) {
+        this._boxMoved = true;
+      }
+      this._updateBoxEl();
+    };
+
+    const onUp = (e) => {
+      if (!this._boxDragging) return;
+      e.stopImmediatePropagation();
+      this._boxDragging = false;
+      if (this._boxEl) this._boxEl.style.display = 'none';
+      // Re-enable after the current event loop turn so Leaflet's own mouseup
+      // handling has already run and can't apply a residual pan.
+      setTimeout(() => this._map?.dragging?.enable(), 0);
+      if (this._boxStart && this._boxCurrent) {
+        this._applyBoxSelection(this._boxStart, this._boxCurrent);
+      }
+      // A drag still ends with a DOM click on whatever sits under the pointer;
+      // without this the pin under the release point would open its detail
+      // panel (or toggle). Swallow exactly that one click. A no-movement
+      // gesture stays a normal click, so Ctrl+click keeps toggling pins.
+      if (this._boxMoved) this._boxSwallowClick = true;
+      this._boxStart = null;
+      this._boxCurrent = null;
+    };
+
+    // Runs before Leaflet's container handlers, so the trailing click never
+    // reaches the map's hit test.
+    const onClick = (e) => {
+      if (!this._boxSwallowClick) return;
+      this._boxSwallowClick = false;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+
+    // A pan/zoom starting mid-drag (wheel, keyboard) invalidates the marquee.
+    const onCancel = () => { if (this._boxDragging) this._cancelBoxSelect(); };
+
+    // Leaflet binds its pan handler to mousedown on the map container itself
+    // (Leaflet 1.9: `new Draggable(map._mapPane, map._container)`), so a
+    // capture listener on an ancestor is not enough — the event still reaches
+    // that listener. Intercepting at the document in the capture phase runs
+    // before anything Leaflet owns and reliably swallows the pan, leaving the
+    // marquee drag to this handler alone.
+    const host = document;
+    host.addEventListener('mousedown', onDown, true);
+    host.addEventListener('mousemove', onMove, true);
+    host.addEventListener('click', onClick, true);
+    // Listen on window so the drag still ends correctly when the pointer is
+    // released outside the map.
+    window.addEventListener('mouseup', onUp, true);
+    // Any touch input cancels a half-drawn marquee (hybrid devices).
+    container.addEventListener('touchstart', onCancel, { passive: true });
+    this._map.on('movestart zoomstart', onCancel);
+
+    this._boxHandlers = { host, container, onDown, onMove, onUp, onCancel, onClick };
+  },
+
+  _updateBoxEl() {
+    if (!this._boxEl || !this._boxStart || !this._boxCurrent) return;
+    const a = this._boxStart;
+    const b = this._boxCurrent;
+    const left = Math.min(a.x, b.x);
+    const top = Math.min(a.y, b.y);
+    this._boxEl.style.left = left + 'px';
+    this._boxEl.style.top = top + 'px';
+    this._boxEl.style.width = Math.abs(a.x - b.x) + 'px';
+    this._boxEl.style.height = Math.abs(a.y - b.y) + 'px';
+  },
+
+  _cancelBoxSelect() {
+    // Esc during a real drag: the pointer release still produces a click on
+    // whatever is underneath, so swallow it (otherwise the aborted drag opens
+    // the detail panel of a pin).
+    if (this._boxMoved) this._boxSwallowClick = true;
+    this._boxDragging = false;
+    this._boxStart = null;
+    this._boxCurrent = null;
+    if (this._boxEl) this._boxEl.style.display = 'none';
+    this._map?.dragging?.enable();
+  },
+
+  // Adds every pin whose centre lies inside the marquee. Additive, matching
+  // Ctrl+click (so a stray box never wipes an existing selection).
+  _applyBoxSelection(a, b) {
+    if (!this._map) return;
+    // Ignore accidental micro-drags (a Ctrl+click that jittered by a pixel).
+    if (Math.abs(a.x - b.x) < 5 && Math.abs(a.y - b.y) < 5) return;
+    const minX = Math.min(a.x, b.x);
+    const maxX = Math.max(a.x, b.x);
+    const minY = Math.min(a.y, b.y);
+    const maxY = Math.max(a.y, b.y);
+
+    let added = 0;
+    for (const h of this.filteredHouses) {
+      if (h.lat == null || h.lng == null) continue;
+      const p = this._map.latLngToContainerPoint([h.lat, h.lng]);
+      if (p.x < minX || p.x > maxX || p.y < minY || p.y > maxY) continue;
+      if (this.selectedHouses.includes(h.internal_id)) continue;
+      this.selectedHouses.push(h.internal_id);
+      added++;
+    }
+    this.refreshMarkerStyles();
+    if (added > 0) {
+      this.showToast(`${this.selectedHouses.length} propiedades seleccionadas`, 'success');
+    } else {
+      this.showToast('No hay propiedades nuevas en el recuadro.', 'info');
+    }
+  },
+
   // "Todo lo visible": adds every pin inside the current viewport to the
   // selection (never removes; use Ctrl+click or Limpiar for that).
   selectVisibleInViewport() {
@@ -323,7 +519,7 @@ const mapMethods = {
   // canvas renderer, event listeners) while the map is closed in the background.
   destroyMap() {
     if (this._map && this._map._loaded) {
-      this._savedCenter = this._map.getCenter();
+      this._savedCenter = markRaw(this._map.getCenter());
       this._savedZoom = this._map.getZoom();
     }
     if (this._map) {
@@ -333,6 +529,22 @@ const mapMethods = {
     this._markerLayer = null;
     this._markerMap = {};
     if (this._mapRO) { this._mapRO.disconnect(); this._mapRO = null; }
+    if (this._boxHandlers) {
+      const { host, onDown, onMove, onUp, onCancel, onClick } = this._boxHandlers;
+      host.removeEventListener('mousedown', onDown, true);
+      host.removeEventListener('mousemove', onMove, true);
+      host.removeEventListener('click', onClick, true);
+      window.removeEventListener('mouseup', onUp, true);
+      this._boxHandlers.container?.removeEventListener('touchstart', onCancel);
+      this._boxHandlers = null;
+    }
+    this._boxEl?.remove();
+    this._boxEl = null;
+    this._boxDragging = false;
+    this._boxMoved = false;
+    this._boxSwallowClick = false;
+    this._boxStart = null;
+    this._boxCurrent = null;
     this._fittedKey = '';
     this._mapMoving = false;
     this._pendingRedraw = false;
