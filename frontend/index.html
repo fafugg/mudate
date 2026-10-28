@@ -984,13 +984,17 @@
     @keydown.escape.window="if (detailHouse && !lightboxImg) closeDetail()"
     @keydown.arrow-up.window="if (!editingModalAddress) { $event.preventDefault(); navigateDetail(-1); }"
     @keydown.arrow-down.window="if (!editingModalAddress) { $event.preventDefault(); navigateDetail(1); }"
-    class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[4000] p-4">
-    <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden">
+    class="fixed inset-0 flex z-[4000]"
+    :class="detailLayout === 'fullscreen' ? '' : 'bg-black/60 backdrop-blur-sm items-center justify-center p-4'">
+    <div class="relative bg-white dark:bg-slate-800 w-full flex flex-col overflow-hidden"
+      :class="detailLayout === 'fullscreen' ? 'h-full' : 'rounded-2xl shadow-2xl max-w-3xl max-h-[85vh]'">
 
 
       <!-- Modal header with gradient -->
-      <div class="bg-gradient-to-r from-blue-600 to-blue-700 px-6 py-5 rounded-t-2xl shrink-0">
-        <div class="flex items-start justify-between gap-3">
+      <div class="bg-gradient-to-r from-blue-600 to-blue-700 shrink-0"
+        :class="detailLayout === 'compact' ? 'px-6 py-5 rounded-t-2xl' : 'px-4 py-2 lg:px-6'">
+        <div class="w-full" :class="detailLayout === 'compact' ? 'max-w-4xl mx-auto' : ''">
+        <div x-show="detailLayout === 'compact'" class="flex items-start justify-between gap-3">
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2 mb-1 flex-wrap">
               <span class="text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-medium"
@@ -1002,14 +1006,14 @@
                 x-text="`🔁 Re-publicado ×${detailHouse?.republish_count}`"></span>
             </div>
             <!-- Address display / inline edit -->
-            <div class="flex items-start gap-2 group/addr">
+            <div x-show="detailLayout === 'compact'" class="flex items-start gap-2 group/addr">
               <h2 x-show="!editingModalAddress"
                 class="text-white font-bold text-sm md:text-base leading-snug flex-1 line-clamp-2 min-h-[2.75rem]">
                 <span x-text="(detailHouse?.manual_address || detailHouse?.address) || 'Sin dirección'"></span>
                 <span x-show="detailHouse?.manual_address"
                   class="ml-1.5 text-xs font-normal text-white/60">(manual)</span>
               </h2>
-              <input x-show="editingModalAddress" x-ref="addrInput"
+              <input x-show="editingModalAddress" x-ref="addrInputCompact"
                 :value="detailHouse?.manual_address || detailHouse?.address || ''"
                 @blur="saveManualAddress(detailHouse, $event.target.value); editingModalAddress = false"
                 @keydown.enter="$event.target.blur()"
@@ -1022,7 +1026,7 @@
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
               </svg>
               <button x-show="!editingModalAddress && _geocodingDetailHouseId !== detailHouse?.internal_id"
-                @click="editingModalAddress = true; $nextTick(() => { $refs.addrInput.focus(); $refs.addrInput.select(); })"
+                @click="editingModalAddress = true; $nextTick(() => { $refs.addrInputCompact.focus(); $refs.addrInputCompact.select(); })"
                 class="shrink-0 mt-0.5 p-1 rounded text-white/40 hover:text-white hover:bg-white/20 transition opacity-0 group-hover/addr:opacity-100">
                 <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2a2 2 0 01.586-1.414z"/>
@@ -1030,12 +1034,24 @@
               </button>
             </div>
           </div>
-          <button @click="closeDetail()"
-            class="shrink-0 text-white/70 hover:text-white text-2xl leading-none mt-0.5 transition">×</button>
+          <div class="flex items-center gap-1 shrink-0">
+            <button @click="toggleDetailLayout()"
+              class="p-1 rounded text-white/70 hover:text-white hover:bg-white/20 transition"
+              :title="detailLayout === 'fullscreen' ? 'Modo compacto' : 'Pantalla completa'">
+              <svg x-show="detailLayout === 'compact'" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9M3.75 20.25h4.5m-4.5 0v-4.5m0 4.5L9 15M20.25 20.25v-4.5m0 4.5h-4.5m4.5 0L15 15" />
+              </svg>
+              <svg x-show="detailLayout === 'fullscreen'" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 9L3.75 3.75M9 9V4.5M9 9H4.5M15 9l5.25-5.25M15 9V4.5M15 9h4.5M9 15l-5.25 5.25M9 15v4.5M9 15h4.5M15 15l5.25 5.25M15 15v4.5M15 15h-4.5" />
+              </svg>
+            </button>
+            <button @click="closeDetail()"
+              class="text-white/70 hover:text-white text-2xl leading-none mt-0.5 transition">×</button>
+          </div>
         </div>
 
-        <!-- Key stats row -->
-        <div class="grid grid-cols-3 gap-2 mt-4">
+        <!-- Key stats row (compact layout) -->
+        <div x-show="detailLayout === 'compact'" class="grid grid-cols-3 gap-2 mt-4">
           <div class="bg-white/15 rounded-xl px-3 py-2 text-center">
             <div class="text-white/70 text-xs mb-0.5">Precio</div>
             <div class="text-white font-bold text-sm" x-text="formatPrice(detailHouse?.price, detailHouse?.currency)"></div>
@@ -1049,24 +1065,66 @@
             <div class="text-white font-bold text-sm" x-text="detailHouse?.expenses ? formatPrice(detailHouse.expenses, detailHouse.expenses_currency || 'ARS') : '—'"></div>
           </div>
         </div>
+
+        <!-- Fullscreen summary row -->
+        <div x-show="detailLayout === 'fullscreen'" class="flex flex-wrap xl:flex-nowrap items-center gap-x-4 gap-y-2">
+          <div class="flex flex-wrap items-center gap-1.5 shrink-0">
+            <span class="text-[10px] px-2 py-1 rounded-full bg-white/15 text-white font-medium"
+              x-text="ENGINE_LABELS[detailHouse?.search_engine] || detailHouse?.search_engine"></span>
+            <span x-show="detailHouse?.type" class="text-[10px] px-2 py-1 rounded-full bg-white/15 text-white font-medium"
+              x-text="detailHouse?.type"></span>
+            <span x-show="detailHouse?.republish_count > 0"
+              class="text-[10px] px-2 py-1 rounded-full bg-amber-400 text-amber-950 font-semibold"
+              x-text="`🔁 ×${detailHouse?.republish_count}`"></span>
+          </div>
+
+          <div class="grid grid-cols-3 gap-1.5 w-full xl:w-[26rem] xl:shrink-0">
+            <div class="rounded-lg bg-white/15 px-2 py-1 text-center">
+              <div class="text-[10px] leading-tight text-white/70">Precio</div>
+              <div class="text-xs font-bold text-white truncate" x-text="formatPrice(detailHouse?.price, detailHouse?.currency)"></div>
+            </div>
+            <div class="rounded-lg bg-white/15 px-2 py-1 text-center">
+              <div class="text-[10px] leading-tight text-white/70">$/m²</div>
+              <div class="text-xs font-bold text-white truncate" x-text="detailHouse?.price_per_m2 ? formatPrice(detailHouse.price_per_m2, detailHouse.currency) : '—'"></div>
+            </div>
+            <div class="rounded-lg bg-white/15 px-2 py-1 text-center">
+              <div class="text-[10px] leading-tight text-white/70">Expensas</div>
+              <div class="text-xs font-bold text-white truncate" x-text="detailHouse?.expenses ? formatPrice(detailHouse.expenses, detailHouse.expenses_currency || 'ARS') : '—'"></div>
+            </div>
+          </div>
+
+          <div class="ml-auto flex items-center gap-1 shrink-0">
+            <button @click="toggleDetailLayout()"
+              class="p-1 rounded text-white/70 hover:text-white hover:bg-white/20 transition"
+              title="Modo compacto" aria-label="Modo compacto">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 9L3.75 3.75M9 9V4.5M9 9H4.5M15 9l5.25-5.25M15 9V4.5M15 9h4.5M9 15l-5.25 5.25M9 15v4.5M9 15h4.5M15 15l5.25 5.25M15 15v4.5M15 15h-4.5" />
+              </svg>
+            </button>
+            <button @click="closeDetail()"
+              class="rounded px-1 text-white/70 hover:text-white hover:bg-white/20 text-2xl leading-none transition"
+              title="Cerrar" aria-label="Cerrar">×</button>
+          </div>
+        </div>
+        </div>
       </div>
 
-      <!-- Image strip -->
-      <div x-show="detailHouse?.images?.length" class="shrink-0 bg-slate-900 px-4 py-3">
+      <!-- Image strip (compact layout only — the fullscreen layout scrolls its gallery below) -->
+      <div x-show="detailLayout === 'compact' && detailHouse?.images?.length" class="shrink-0 bg-slate-900 px-4 py-3">
         <div class="flex gap-2 overflow-x-auto scrollbar-hide">
           <template x-for="(img, i) in (detailHouse?.images || [])" :key="img">
-            <img :src="img" @click="openLightbox(detailHouse.images, i)"
+            <img :src="thumbUrl ? thumbUrl(img) : img" :data-full="img" @error="if($event.target.dataset.full && $event.target.src !== $event.target.dataset.full){ $event.target.src = $event.target.dataset.full; $event.target.onerror = null; }" @click="openLightbox(detailHouse.images, i)"
               class="h-28 w-44 object-cover rounded-lg shrink-0 cursor-zoom-in hover:opacity-80 transition ring-2 ring-transparent hover:ring-blue-400"
               loading="lazy" />
           </template>
         </div>
       </div>
 
-      <!-- Scrollable body -->
-      <div class="overflow-y-auto flex-1 p-5 space-y-4">
-
+      <!-- Compact scrollable body -->
+      <div x-ref="detailBodyCompact" class="overflow-y-auto flex-1 p-5"
+        x-show="detailLayout === 'compact'">
         <!-- Specs chips -->
-        <div class="flex flex-wrap gap-2">
+        <div class="flex flex-wrap gap-2 mb-4">
           <template x-for="chip in detailChips(detailHouse)" :key="chip.label">
             <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
               <span class="text-base leading-none" x-text="chip.icon"></span>
@@ -1078,12 +1136,78 @@
           </template>
         </div>
 
-        <!-- Two-column details grid -->
-        <div class="grid grid-cols-2 gap-3">
+        <!-- Cards row -->
+        <div class="grid grid-cols-2 gap-3 mb-4">
+          <div x-show="detailHouse?.real_estate || detailHouse?.real_estate_phone" class="bg-blue-50 border border-blue-100 rounded-xl p-3 min-h-[130px]">
+            <div class="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-2">🏢 Inmobiliaria</div>
+            <div class="space-y-1"><div x-show="detailHouse?.real_estate" class="text-sm font-semibold text-slate-800" x-text="detailHouse?.real_estate"></div><div x-show="detailHouse?.real_estate_phone" class="text-xs text-slate-500" x-text="detailHouse?.real_estate_phone"></div></div>
+          </div>
+          <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 min-h-[130px]">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">📅 Fechas</div>
+            <div class="space-y-1.5 text-xs"><div x-show="originalDiffersFromPublished(detailHouse)" class="flex justify-between gap-2"><span class="text-slate-400">Publicado originalmente</span><span class="text-slate-700 font-medium" x-text="formatDateOnly(originalPublishedAt(detailHouse))"></span></div><div class="flex justify-between gap-2"><span class="text-slate-400">Antigüedad</span><span class="text-slate-700 font-medium" x-text="houseAgeDays(detailHouse) != null ? houseAgeDays(detailHouse) + ' días' : '—'"></span></div><div x-show="detailHouse?.republish_count > 0" class="flex justify-between gap-2"><span class="text-slate-400">Re-publicaciones</span><span class="text-amber-600 font-semibold" x-text="`🔁 ×${detailHouse?.republish_count}`"></span></div><div x-show="detailHouse?.published_at" class="flex justify-between gap-2"><span class="text-slate-400">Publicado</span><span class="text-slate-700 font-medium" x-text="formatDateOnly(detailHouse?.published_at)"></span></div><div class="flex justify-between gap-2"><span class="text-slate-400">Actualizado</span><span class="text-slate-700 font-medium" x-text="timeAgo(detailHouse?.last_updated)"></span></div></div>
+          </div>
+          <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 min-h-[130px]"><div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">📐 Detalles</div><div class="space-y-1.5 text-xs"><template x-for="[lbl, val] in detailMeta(detailHouse)" :key="lbl"><div class="flex justify-between gap-2"><span class="text-slate-400" x-text="lbl"></span><span class="text-slate-700 font-medium text-right" x-text="val"></span></div></template></div></div>
+          <div x-show="detailHouse?.amenities?.length" class="bg-slate-50 border border-slate-200 rounded-xl p-3 min-h-[130px]"><div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">✨ Amenities</div><div class="flex flex-wrap gap-1.5"><template x-for="a in (detailHouse?.amenities || [])" :key="a"><span class="text-xs bg-white border border-slate-200 text-slate-600 px-2.5 py-1 rounded-full shadow-sm" x-text="a"></span></template></div></div>
+        </div>
 
-          <!-- Contact card (left) -->
+        <!-- Description -->
+        <div x-show="detailHouse?.description" class="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-4"><div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">📄 Descripción</div><p class="text-xs text-slate-600 leading-relaxed whitespace-pre-line" x-text="detailHouse?.description"></p></div>
+
+        <!-- Price history -->
+        <div x-show="detailHouse?.previous_prices?.length" class="bg-amber-50 border border-amber-100 rounded-xl p-3 mb-4"><div class="text-xs font-semibold text-amber-600 uppercase tracking-wide mb-2">📈 Historial de precios</div><div class="space-y-1"><template x-for="(ph, i) in (detailHouse?.previous_prices || [])" :key="i"><div class="flex justify-between text-xs py-1 border-b border-amber-100 last:border-0"><span class="text-slate-500" x-text="formatDate(ph.timestamp)"></span><span class="font-semibold text-slate-700" x-text="formatPrice(ph.price, ph.currency)"></span></div></template><div class="flex justify-between text-xs pt-1 font-bold text-slate-800"><span>Precio actual</span><span x-text="formatPrice(detailHouse?.price, detailHouse?.currency)"></span></div></div></div>
+
+        <!-- Notas -->
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-4"><div class="flex items-center justify-between mb-2"><div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">📝 Notas</div><span x-show="notesSaved" x-transition.opacity class="text-[10px] text-green-600 font-medium">Guardado ✓</span></div><textarea x-ref="notesTextarea" :value="detailHouse?.notes || ''" @blur="saveNotes(detailHouse, $event.target.value)" @input="notesSaved = false" rows="3" placeholder="Escribí tus notas sobre esta propiedad…" class="w-full text-xs text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder-slate-300"></textarea></div>
+
+        <!-- IDs -->
+        <div class="text-[10px] text-slate-300 space-y-0.5"><div>ID interno: <span x-text="detailHouse?.internal_id"></span></div><div x-show="detailHouse?.search_engine_id">Search Engine ID: <span x-text="detailHouse?.search_engine_id"></span></div></div>
+      </div>
+
+      <!-- Fullscreen scrollable body -->
+      <div x-ref="detailBody" class="overflow-y-auto flex-1 min-h-0 p-5 pb-24 xl:overflow-hidden xl:p-0 xl:pb-24"
+        x-show="detailLayout === 'fullscreen'">
+
+        <!-- Main cards row + right rail (fullscreen 3:1 grid) -->
+        <div class="grid grid-cols-1 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(0,3fr)_minmax(0,1fr)] gap-5 items-stretch">
+
+        <!-- Main content: six cards followed by photos -->
+        <div class="flex min-w-0 flex-col gap-4 xl:min-h-0 xl:overflow-y-auto xl:p-5">
+
+        <!-- Six cards: three columns by two equal-height rows -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 xl:grid-rows-[repeat(2,minmax(0,9rem))] gap-3">
+
+          <!-- Description -->
+          <div x-show="detailHouse?.description" class="bg-slate-50 border border-slate-200 rounded-xl p-3 xl:min-h-0 xl:overflow-hidden">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">📄 Descripción</div>
+            <p class="text-xs text-slate-600 leading-relaxed whitespace-pre-line xl:max-h-[calc(9rem-3rem)] xl:overflow-y-auto" x-text="detailHouse?.description"></p>
+          </div>
+
+          <!-- Detalles -->
+          <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 xl:min-h-0 xl:overflow-y-auto">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">📐 Detalles</div>
+            <div class="space-y-1.5 text-xs">
+              <template x-for="[lbl, val] in detailMeta(detailHouse)" :key="lbl">
+                <div class="flex justify-between gap-2">
+                  <span class="text-slate-400" x-text="lbl"></span>
+                  <span class="text-slate-700 font-medium text-right" x-text="val"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Amenities -->
+          <div x-show="detailHouse?.amenities?.length" class="bg-slate-50 border border-slate-200 rounded-xl p-3 xl:min-h-0 xl:overflow-y-auto">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">✨ Amenities</div>
+            <div class="flex flex-wrap gap-1.5">
+              <template x-for="a in (detailHouse?.amenities || [])" :key="a">
+                <span class="text-xs bg-white border border-slate-200 text-slate-600 px-2.5 py-1 rounded-full shadow-sm" x-text="a"></span>
+              </template>
+            </div>
+          </div>
+
+          <!-- Inmobiliaria -->
           <div x-show="detailHouse?.real_estate || detailHouse?.real_estate_phone"
-            class="bg-blue-50 border border-blue-100 rounded-xl p-3">
+            class="bg-blue-50 border border-blue-100 rounded-xl p-3 xl:min-h-0 xl:overflow-y-auto">
             <div class="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-2">🏢 Inmobiliaria</div>
             <div class="space-y-1">
               <div x-show="detailHouse?.real_estate"
@@ -1093,8 +1217,8 @@
             </div>
           </div>
 
-          <!-- Dates card (right) -->
-          <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+          <!-- Fechas -->
+          <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 xl:min-h-0 xl:overflow-y-auto">
             <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">📅 Fechas</div>
             <div class="space-y-1.5 text-xs">
               <div x-show="originalDiffersFromPublished(detailHouse)" class="flex justify-between gap-2">
@@ -1121,80 +1245,135 @@
             </div>
           </div>
 
-          <!-- Property details card (left) -->
-          <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
-            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">📐 Detalles</div>
-            <div class="space-y-1.5 text-xs">
-              <template x-for="[lbl, val] in detailMeta(detailHouse)" :key="lbl">
-                <div class="flex justify-between gap-2">
-                  <span class="text-slate-400" x-text="lbl"></span>
-                  <span class="text-slate-700 font-medium text-right" x-text="val"></span>
+          <!-- Price History -->
+          <div x-show="detailHouse?.previous_prices?.length" class="bg-amber-50 border border-amber-100 rounded-xl p-3 xl:min-h-0 xl:overflow-y-auto">
+            <div class="text-xs font-semibold text-amber-600 uppercase tracking-wide mb-2">📈 Historial de precios</div>
+            <div class="space-y-1">
+              <template x-for="(ph, i) in (detailHouse?.previous_prices || [])" :key="i">
+                <div class="flex justify-between text-xs py-1 border-b border-amber-100 last:border-0">
+                  <span class="text-slate-500" x-text="formatDate(ph.timestamp)"></span>
+                  <span class="font-semibold text-slate-700" x-text="formatPrice(ph.price, ph.currency)"></span>
                 </div>
               </template>
-            </div>
-          </div>
-
-          <!-- Amenities card (right) -->
-          <div x-show="detailHouse?.amenities?.length" class="bg-slate-50 border border-slate-200 rounded-xl p-3">
-            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">✨ Amenities</div>
-            <div class="flex flex-wrap gap-1.5">
-              <template x-for="a in (detailHouse?.amenities || [])" :key="a">
-                <span class="text-xs bg-white border border-slate-200 text-slate-600 px-2.5 py-1 rounded-full shadow-sm" x-text="a"></span>
-              </template>
+              <div class="flex justify-between text-xs pt-1 font-bold text-slate-800">
+                <span>Precio actual</span>
+                <span x-text="formatPrice(detailHouse?.price, detailHouse?.currency)"></span>
+              </div>
             </div>
           </div>
 
         </div>
 
-        <!-- Description -->
-        <div x-show="detailHouse?.description" class="bg-slate-50 border border-slate-200 rounded-xl p-3">
-          <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">📄 Descripción</div>
-          <p class="text-xs text-slate-600 leading-relaxed whitespace-pre-line" x-text="detailHouse?.description"></p>
+        <!-- Gallery (Row 2) -->
+        <div x-show="detailHouse?.images?.length">
+          <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2"
+            x-text="`🖼 Fotos (${(detailHouse?.images || []).length})`"></div>
+          <div class="grid grid-cols-2 md:grid-cols-4 grid-flow-row-dense auto-rows-[130px] xl:auto-rows-[160px] gap-2">
+            <template x-for="(img, i) in (detailHouse?.images || [])" :key="img">
+              <img :src="thumbUrl ? thumbUrl(img, '1024x768') : img" :data-full="img"
+                @error="if($event.target.dataset.full && $event.target.src !== $event.target.dataset.full){ $event.target.src = $event.target.dataset.full; $event.target.onerror = null; }"
+                @load="$event.target.naturalHeight > $event.target.naturalWidth && $event.target.classList.add('row-span-2')"
+                @click="openLightbox(detailHouse.images, i)"
+                :class="i % 7 === 0 ? 'col-span-2 row-span-2' : ''"
+                class="w-full h-full object-cover rounded-lg cursor-zoom-in hover:opacity-90 transition bg-slate-200"
+                loading="lazy" />
+            </template>
+          </div>
+        </div>
         </div>
 
-        <!-- Price history -->
-        <div x-show="detailHouse?.previous_prices?.length" class="bg-amber-50 border border-amber-100 rounded-xl p-3">
-          <div class="text-xs font-semibold text-amber-600 uppercase tracking-wide mb-2">📈 Historial de precios</div>
-          <div class="space-y-1">
-            <template x-for="(ph, i) in (detailHouse?.previous_prices || [])" :key="i">
-              <div class="flex justify-between text-xs py-1 border-b border-amber-100 last:border-0">
-                <span class="text-slate-500" x-text="formatDate(ph.timestamp)"></span>
-                <span class="font-semibold text-slate-700" x-text="formatPrice(ph.price, ph.currency)"></span>
+        <!-- Right rail (specs chips, ubicación, notas, IDs) -->
+        <div class="flex min-h-0 min-w-0 flex-col gap-4 xl:overflow-y-auto xl:p-5">
+
+          <!-- Specs chips -->
+          <div class="flex flex-wrap gap-2">
+            <template x-for="chip in detailChips(detailHouse)" :key="chip.label">
+              <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
+                <span class="text-base leading-none" x-text="chip.icon"></span>
+                <div>
+                  <div class="text-slate-400 text-[10px] leading-none mb-0.5" x-text="chip.label"></div>
+                  <div class="text-slate-700 text-xs font-semibold" x-text="chip.value"></div>
+                </div>
               </div>
             </template>
-            <div class="flex justify-between text-xs pt-1 font-bold text-slate-800">
-              <span>Precio actual</span>
-              <span x-text="formatPrice(detailHouse?.price, detailHouse?.currency)"></span>
+          </div>
+
+          <!-- Ubicación -->
+          <div x-show="detailLayout === 'fullscreen'" class="bg-slate-50 border border-slate-200 rounded-xl p-3 min-h-[130px]">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">📍 Ubicación</div>
+            <div class="flex items-start gap-2 mb-3">
+              <div class="min-w-0 flex-1">
+                <div class="flex items-start gap-2">
+                  <div x-show="!editingModalAddress" class="min-w-0 flex-1 text-xs text-slate-700 dark:text-slate-200 font-medium break-words">
+                    <span x-text="(detailHouse?.manual_address || detailHouse?.address) || 'Sin dirección'"></span>
+                    <span x-show="detailHouse?.manual_address" class="text-[10px] text-slate-400 font-normal">(manual)</span>
+                  </div>
+                  <input x-show="editingModalAddress" x-ref="addrInputFullscreen"
+                    :value="detailHouse?.manual_address || detailHouse?.address || ''"
+                    @blur="saveManualAddress(detailHouse, $event.target.value); editingModalAddress = false"
+                    @keydown.enter="$event.target.blur()"
+                    @keydown.escape="editingModalAddress = false"
+                    class="min-w-0 flex-1 bg-white dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  <svg x-show="!editingModalAddress && _geocodingDetailHouseId === detailHouse?.internal_id"
+                    class="animate-spin h-4 w-4 text-blue-500 shrink-0" fill="none" viewBox="0 0 24 24" aria-label="Actualizando ubicación">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                  </svg>
+                  <button x-show="!editingModalAddress && _geocodingDetailHouseId !== detailHouse?.internal_id"
+                    @click="editingModalAddress = true; $nextTick(() => { $refs.addrInputFullscreen.focus(); $refs.addrInputFullscreen.select(); })"
+                    class="shrink-0 p-1 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition"
+                    title="Editar dirección" aria-label="Editar dirección">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2a2 2 0 01.586-1.414z"/>
+                    </svg>
+                  </button>
+                </div>
+                <div x-show="_savingAddressId === detailHouse?.internal_id" class="text-[10px] text-slate-400 mt-1">Guardando…</div>
+                <div x-show="_savedAddressId === detailHouse?.internal_id" class="text-[10px] text-green-600 mt-1">Dirección guardada ✓</div>
+              </div>
+            </div>
+            <div x-show="detailHouse?.lat != null && detailHouse?.lng != null"
+              id="detail-map" class="h-64 rounded-lg overflow-hidden border border-slate-200 bg-slate-100"></div>
+            <div x-show="!(detailHouse?.lat != null && detailHouse?.lng != null)"
+              class="h-64 rounded-lg border border-dashed border-slate-300 bg-white flex flex-col items-center justify-center gap-1.5 text-center px-6">
+              <span class="text-2xl leading-none">📍</span>
+              <div class="text-xs text-slate-500"
+                x-text="detailHouse?.geocode_failed ? 'No se pudo geocodificar la dirección' : 'Sin coordenadas para esta dirección'"></div>
+              <div class="text-[10px] text-slate-400">Editá la dirección (lápiz en el encabezado) para reintentar</div>
             </div>
           </div>
-        </div>
 
-        <!-- Notes -->
-        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
-          <div class="flex items-center justify-between mb-2">
-            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">📝 Notas</div>
-            <span x-show="notesSaved" x-transition.opacity class="text-[10px] text-green-600 font-medium">Guardado ✓</span>
+          <!-- Notas -->
+          <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 min-h-[130px]">
+            <div class="flex items-center justify-between mb-2">
+              <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide">📝 Notas</div>
+              <span x-show="notesSaved" x-transition.opacity class="text-[10px] text-green-600 font-medium">Guardado ✓</span>
+            </div>
+            <textarea
+              x-ref="notesTextarea"
+              :value="detailHouse?.notes || ''"
+              @blur="saveNotes(detailHouse, $event.target.value)"
+              @input="notesSaved = false"
+              rows="3"
+              placeholder="Escribí tus notas sobre esta propiedad…"
+              class="w-full text-xs text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder-slate-300">
+            </textarea>
           </div>
-          <textarea
-            x-ref="notesTextarea"
-            :value="detailHouse?.notes || ''"
-            @blur="saveNotes(detailHouse, $event.target.value)"
-            @input="notesSaved = false"
-            rows="3"
-            placeholder="Escribí tus notas sobre esta propiedad…"
-            class="w-full text-xs text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder-slate-300">
-          </textarea>
-        </div>
 
-        <!-- IDs -->
-        <div class="text-[10px] text-slate-300 space-y-0.5">
-          <div>ID interno: <span x-text="detailHouse?.internal_id"></span></div>
-          <div x-show="detailHouse?.search_engine_id">Search Engine ID: <span x-text="detailHouse?.search_engine_id"></span></div>
+          <!-- IDs -->
+          <div class="text-[10px] text-slate-300 space-y-0.5">
+            <div>ID interno: <span x-text="detailHouse?.internal_id"></span></div>
+            <div x-show="detailHouse?.search_engine_id">Search Engine ID: <span x-text="detailHouse?.search_engine_id"></span></div>
+          </div>
+
         </div>
-      </div>
+      </div><!-- /scrollable body -->
 
       <!-- Modal footer -->
-      <div class="shrink-0 border-t border-slate-100 px-5 py-3 flex items-center justify-between bg-slate-50 rounded-b-2xl">
+      <div class="shrink-0 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-[0_-6px_18px_rgba(15,23,42,0.12)]"
+        :class="detailLayout === 'compact' ? 'rounded-b-2xl' : 'absolute inset-x-0 bottom-0 z-30'">
+        <div class="px-5 py-3 flex items-center justify-between"
+          :class="detailLayout === 'fullscreen' ? 'w-full lg:px-10' : ''">
         <div class="flex items-center gap-2">
           <span class="hidden md:inline text-xs text-slate-400">Revisión:</span>
           <template x-if="detailHouse">
@@ -1240,6 +1419,7 @@
               class="p-1.5 rounded-lg text-slate-500 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed transition"
               title="Siguiente (↓)">▼</button>
           </div>
+        </div>
         </div>
       </div>
     </div>
