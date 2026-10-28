@@ -115,55 +115,26 @@ class MercadoLibreScraper(BaseScraper):
                 total_pages = paging_info.get("totalPages", 500)
                 logger.info("ML paging info: %d total results, %d pages", total_items, total_pages)
 
-            # Extract listings from all pages via click-based pagination
+            # Collect all cards across all pages first (phase 1)
+            all_cards: List[Dict[str, Any]] = []
             current_page = 1
             while current_page <= total_pages:
                 if cancel_check and cancel_check():
                     break
 
-                # Extract listings from current page
                 card_listings = self._extract_from_json_ld(await search_page.content())
-
                 if not card_listings:
                     break
 
-                # Process each listing using a separate tab for details
                 page_added = 0
                 for card in card_listings:
                     se_id = card.get("search_engine_id") or ""
                     if se_id in seen_ids:
                         continue
                     seen_ids.add(se_id)
-
-                    is_known = bool(existing_ids and se_id and se_id in existing_ids)
-                    if progress_callback:
-                        action = "Verificando precio" if is_known else "Descargando detalle"
-                        progress_callback(
-                            f"Pág {current_page}/{total_pages} — {action} {len(results) + 1}/{total_items}",
-                            len(results),
-                            total_items,
-                        )
-
-                    # Always fetch detail pages to get full galleries
-                    if card.get("url"):
-                        # Open detail page in a new tab to preserve search page state
-                        detail_page = await context.new_page()
-                        try:
-                            detail = await _scrape_detail(detail_page, card["url"])
-                            card.update({k: v for k, v in detail.items() if v is not None})
-                        finally:
-                            await detail_page.close()
-
-                    card["price_per_m2"] = self.compute_price_per_m2(
-                        card.get("price"), card.get("covered_m2") or card.get("total_m2")
-                    )
-                    results.append(card)
+                    all_cards.append(card)
                     page_added += 1
 
-                    if not is_known:
-                        await asyncio.sleep(0.5)
-
-                # Track consecutive pages with zero new listings
                 if page_added == 0:
                     consecutive_empty += 1
                     if consecutive_empty >= 2:
@@ -175,10 +146,8 @@ class MercadoLibreScraper(BaseScraper):
                 else:
                     consecutive_empty = 0
 
-                # Try to click "Siguiente" (Next) button, fall back to URL navigation
                 next_clicked = await self._click_next_page(search_page)
                 if not next_clicked:
-                    # Fallback: navigate directly via URL
                     next_offset = (current_page) * ML_PAGE_SIZE + 1
                     next_url = self._page_url(search_filter, next_offset)
                     try:
@@ -196,6 +165,78 @@ class MercadoLibreScraper(BaseScraper):
 
                 current_page += 1
                 await asyncio.sleep(self.delay)
+
+            if cancel_check and cancel_check():
+                self.last_paging_info = {"total": total_items, "totalPages": total_pages} if total_items else {}
+                return results
+
+            # Phase 2: visit detail pages — parallel with semaphore, reuse tabs
+            total = len(all_cards)
+            completed = 0
+            sem = asyncio.Semaphore(2)
+            headless = True
+
+            async def _process_card(card: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                nonlocal completed
+                if cancel_check and cancel_check():
+                    return None
+                se_id = card.get("search_engine_id") or ""
+                is_known = bool(existing_ids and se_id and se_id in existing_ids)
+
+                if progress_callback:
+                    action = "Verificando precio" if is_known else "Descargando detalle"
+                    progress_callback(
+                        f"{action} {min(completed + 1, total)}/{total}",
+                        completed,
+                        total,
+                    )
+
+                if card.get("url") and not is_known:
+                    async with sem:
+                        if cancel_check and cancel_check():
+                            return None
+                        detail_page = await context.new_page()
+                        _BLOCK = {"media", "font"}
+                        try:
+                            await detail_page.route(
+                                "**/*",
+                                lambda route, req, b=_BLOCK: (
+                                    route.abort() if req.resource_type in b else route.continue_()
+                                ),
+                            )
+                        except Exception:
+                            pass
+                        try:
+                            detail = await _scrape_detail(detail_page, card["url"])
+                            if detail:
+                                card.update({k: v for k, v in detail.items() if v is not None})
+                        finally:
+                            try:
+                                await detail_page.close()
+                            except Exception:
+                                pass
+                # If known, skip detail fetch entirely (price check can be added later if needed)
+
+                card["price_per_m2"] = self.compute_price_per_m2(
+                    card.get("price"), card.get("covered_m2") or card.get("total_m2")
+                )
+                completed += 1
+                if progress_callback:
+                    action = "Verificando precio" if is_known else "Descargando detalle"
+                    progress_callback(
+                        f"{action} {completed}/{total}",
+                        completed,
+                        total,
+                    )
+                return card
+
+            raw_results = await asyncio.gather(*[_process_card(c) for c in all_cards], return_exceptions=True)
+            for r in raw_results:
+                if isinstance(r, Exception):
+                    logger.error("ML card processing error: %s", r)
+                    continue
+                if r:
+                    results.append(r)
 
         self.last_paging_info = {"total": total_items, "totalPages": total_pages} if total_items else {}
         return results
@@ -587,20 +628,20 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
             )
             return await _detail_from_http(url)
 
-        # Gallery images and the specs table render independently, so wait for
-        # both at once (worst case max(8s), not 8s + 8s) — reading surfaces
-        # from a half-rendered page used to leave total_m2 missing.
-        images_ready, _ = await asyncio.gather(
-            _wait_ok(page, _IMAGES_READY_JS, 8000),
-            _wait_ok(page, _SPECS_READY_JS, 8000),
-        )
-        if not images_ready:
-            await asyncio.sleep(2)
+        # Gallery images and the specs table render independently, so wait briefly
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(
+                    _wait_ok(page, _IMAGES_READY_JS, 3000),
+                    _wait_ok(page, _SPECS_READY_JS, 3000),
+                ),
+                timeout=4,
+            )
+        except Exception:
+            pass
 
         # A finalized listing can hydrate the PDP and only *then* soft-navigate
-        # to a search page, which the check at `goto` was too early to see.
-        # Re-checking here, before anything is read, is what keeps a search
-        # page's first card image out of this listing's record.
+        # to a search page
         if _redirected_away(url, page.url):
             logger.info(
                 "ML detail %s: navigated to %s after hydration — no data read",
@@ -631,15 +672,16 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
         # Extract description from #description element
         desc_el = await page.query_selector('#description')
         if desc_el:
-            desc_text = (await desc_el.inner_text()).strip()
-            # Clean up the description - remove "Descripción" header if present
-            if desc_text.startswith("Descripción"):
-                desc_text = desc_text[len("Descripción"):].strip()
-            if desc_text and len(desc_text) > 20:
-                result["description"] = desc_text[:2000]
+            try:
+                desc_text = (await desc_el.inner_text()).strip()
+                if desc_text.startswith("Descripción"):
+                    desc_text = desc_text[len("Descripción"):].strip()
+                if desc_text and len(desc_text) > 20:
+                    result["description"] = desc_text[:2000]
+            except Exception:
+                pass
 
         # Extract technical specifications from tables
-        # Tables use <th> for labels and <td> for values
         specs_data = await page.evaluate("""() => {
             const tables = document.querySelectorAll('table');
             const allSpecs = {};
@@ -654,8 +696,6 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
                         const label = th.textContent.trim();
                         const value = td.textContent.trim();
                         allSpecs[label] = value;
-
-                        // Collect amenities (value is "Sí")
                         if (value === 'Sí') {
                             amenities.push(label);
                         }
@@ -668,67 +708,49 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
         specs = specs_data.get("specs", {})
         amenities_from_tables = specs_data.get("amenities", [])
 
-        # Map technical specs to house fields (also drops an impossible total)
         _apply_specs(result, specs)
 
-        # Browser path gave no surface rows (not hydrated in time, or a
-        # layout without tables): read them from the same page over plain
-        # HTTP, where the table is server-rendered and needs no JavaScript.
         if "Superficie total" not in specs and "Superficie cubierta" not in specs:
-            http_specs = await _fetch_specs_http(url)
-            if http_specs:
-                logger.info("ML detail %s: spec rows recovered over HTTP", url[-60:])
-                _apply_specs(result, http_specs)
+            try:
+                http_specs = await _fetch_specs_http(url)
+                if http_specs:
+                    logger.info("ML detail %s: spec rows recovered over HTTP", url[-60:])
+                    _apply_specs(result, http_specs)
+            except Exception:
+                pass
 
-        # Use amenities from tables (only those with "Sí")
         if amenities_from_tables:
             result["amenities"] = amenities_from_tables
 
-        # Extract expenses from DOM
-        expenses_text = await _safe_text(page, "[class*='expense'], [class*='expensa'], [class*='expensas']")
-        if expenses_text:
-            val, curr = parse_price(expenses_text)
-            if val:
-                result["expenses"] = val
-                result["expenses_currency"] = curr
+        try:
+            expenses_text = await _safe_text(page, "[class*='expense'], [class*='expensa'], [class*='expensas']")
+            if expenses_text:
+                val, curr = parse_price(expenses_text)
+                if val:
+                    result["expenses"] = val
+                    result["expenses_currency"] = curr
+        except Exception:
+            pass
 
-        # Extract address from DOM - only if we don't already have a good address from search page
-        # The search page polycard JSON provides better addresses than the detail page DOM
         if not result.get("address") or len(result.get("address", "")) < 20:
-            addr_text = await _safe_text(page, "[class*='location'] address, [class*='address'] address")
-            if addr_text and len(addr_text) < 200 and "whatsapp" not in addr_text.lower():
-                result["address"] = addr_text
+            try:
+                addr_text = await _safe_text(page, "[class*='location'] address, [class*='address'] address")
+                if addr_text and len(addr_text) < 200 and "whatsapp" not in addr_text.lower():
+                    result["address"] = addr_text
+            except Exception:
+                pass
 
-        # Try to interact with gallery to load all images
+        # Extract gallery images without forcing full scroll/click
         try:
-            # Click to open gallery if there's a gallery button
-            btn = await page.query_selector('button:has-text("Ver todas"), button:has-text("Galería"), .ui-pdp-gallery__thumbnail, [class*="gallery"] button')
-            if btn:
-                await btn.click()
-                await asyncio.sleep(2)
+            imgs = await page.evaluate(_GALLERY_IMAGES_JS)
+            if imgs:
+                existing = result.get("images", [])
+                for img in imgs:
+                    if img not in existing:
+                        existing.append(img)
+                result["images"] = existing
         except Exception:
             pass
-        try:
-            await page.evaluate("""async () => {
-                const delay = ms => new Promise(res => setTimeout(res, ms));
-                for (let i = 0; i < 15; i++) {
-                    window.scrollBy(0, window.innerHeight);
-                    await delay(150);
-                }
-                window.scrollTo(0, 0);
-            }""")
-            await asyncio.sleep(1)
-        except Exception:
-            pass
-
-        # Extract the gallery images (both PDP layouts — see _GALLERY_IMAGES_JS)
-        imgs = await page.evaluate(_GALLERY_IMAGES_JS)
-        if imgs:
-            existing = result.get("images", [])
-            for img in imgs:
-                if img not in existing:
-                    existing.append(img)
-            result["images"] = existing
 
         return result
     except Exception as e:
