@@ -59,6 +59,7 @@ function app() {
     _cacheTick: 0,
     mobileInfoOpen: true,
     switchingView: false,
+    cardView: false,
     _editSources: [],
     _editSourceEngine: '',
     _editSourceFilter: '',
@@ -482,35 +483,31 @@ function app() {
     // ── Navigation ───────────────────────────────────────────────────────────
     async setView(view) {
       const toMap = view === 'map';
-      // Only no-op when clicking the active TABLE toggle. Never early-return for
-      // 'map': viewInMap() re-calls setView('map') while already on the map to
-      // re-trigger openMap()/initMap() and fly to the focused house.
-      if (!toMap && !this.mapView) return;
+      const toCard = view === 'card';
+      if (toMap && this.mapView && this._map) {
+        // viewInMap() can call setView('map') again to focus another house.
+        this._resizeMap();
+        await this.openMap();
+        return;
+      }
+      if (!toMap && ((toCard && this.cardView) || (!toCard && !this.cardView && !this.mapView))) return;
+
+      this.switchingView = true;
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       if (!toMap) {
-        // The table remounts via x-if when mapView flips, which blocks the main
-        // thread. Paint the spinner first, then flip the view, and destroy the
-        // map so it doesn't keep running in the background (mirrors the table).
-        this.switchingView = true;
-        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-        this.mapView = false;
-        this.destroyMap();
+        if (this.mapView) {
+          this.mapView = false;
+          this.destroyMap();
+        }
+        this.cardView = toCard;
         await this.$nextTick();
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         this.switchingView = false;
         return;
       }
-      // Already on the map (e.g. viewInMap re-focus from a pin's detail modal):
-      // the map is alive, so just re-init without the spinner flash.
-      if (this._map) {
-        this._resizeMap();
-        await this.openMap();
-        return;
-      }
-      // Going to map: it was destroyed on the way out, so it must be re-created.
-      // Show the spinner while the container mounts and the map initializes.
-      this.switchingView = true;
-      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      // Going to the map: it was destroyed on the way out, so it must be re-created.
       this.mapView = true;
+      this.cardView = false;
       await this.$nextTick();
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       this._resizeMap();
@@ -534,6 +531,7 @@ function app() {
       this.runDismissed = false;
       this.detailHouse = null;
       this.mapView = false;
+      this.cardView = false;
       this.actionsOpen = false;
       this._mapFocusHouse = null;
       this.destroyMap();
@@ -556,6 +554,7 @@ function app() {
       this.filterRealEstate = '';
       this.filtersOpen = false;
       this.mapView = false;
+      this.cardView = false;
       this.destroyMap();
       this._savedCenter = null;
       this._savedZoom = null;
@@ -622,6 +621,7 @@ function app() {
         this.filterRealEstate = '';
         this.filtersOpen = false;
         this.mapView = false;
+        this.cardView = false;
         this.destroyMap();
         this._savedCenter = null;
         this._savedZoom = null;
