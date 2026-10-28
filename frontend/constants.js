@@ -76,3 +76,14 @@ async function api(method, path, body = null) {
   }
   return res.json();
 }
+
+const _IMG_SIZE_RE = /\/(\d{2,4})x\d{2,4}\//;
+
+function thumbUrl(url, size = '360x266') {
+  if (!url || typeof url !== 'string') return url;
+  if (!/imgar\.zonapropcdn\.com/i.test(url)) return url;
+  if (_IMG_SIZE_RE.test(url)) {
+    return url.replace(_IMG_SIZE_RE, `/${size}/`);
+  }
+  return url;
+}

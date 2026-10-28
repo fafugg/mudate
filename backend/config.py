@@ -39,6 +39,8 @@ class Settings:
     )
     default_delay: float = 2.0  # seconds between page requests
     max_pages: int = 500  # safety cap for pagination
+    # Complete Zonaprop galleries reach ~50 photos; this is a safety cap.
+    max_gallery_images: int = 60
 
     # Optional path to a Chromium binary. Empty = use Playwright's bundled
     # build. Set it when the bundled download is unavailable (e.g. ARM64

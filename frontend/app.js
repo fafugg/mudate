@@ -65,6 +65,7 @@ function app() {
     sortBy: 'search_engine_id',
     sortDir: 'asc',
     detailHouse: null,
+    detailLayout: localStorage.getItem('detailLayout') === 'fullscreen' ? 'fullscreen' : 'compact',
     lightboxImg: null,
     lightboxImages: [],
     lightboxIdx: 0,
@@ -715,11 +716,35 @@ function app() {
     },
 
     // ── House actions ────────────────────────────────────────────────────────
-    openDetail(h) { this.detailHouse = h; this.lightboxImg = null; this.notesSaved = false; },
+    openDetail(h) {
+      this.detailHouse = h;
+      this.lightboxImg = null;
+      this.notesSaved = false;
+      // The fullscreen layout embeds a mini map at the house address; scroll
+      // back to the top (so prev/next opens each property at its title) and
+      // create — or re-center — the map once the modal is in the DOM.
+      if (this.detailLayout === 'fullscreen') {
+        this.$nextTick(() => {
+          const body = this.$refs.detailBody;
+          if (body) body.scrollTop = 0;
+          this.initDetailMap(h);
+        });
+      }
+    },
 
     openDetailById(houseId) {
       const h = this.houses.find(h => h.internal_id === houseId);
       if (h) this.openDetail(h);
+    },
+
+    // Toggle the detail modal between the centered compact card and the
+    // fullscreen (portal-style) layout. Persisted across reloads.
+    toggleDetailLayout() {
+      this.detailLayout = this.detailLayout === 'fullscreen' ? 'compact' : 'fullscreen';
+      localStorage.setItem('detailLayout', this.detailLayout);
+      if (this.detailLayout === 'fullscreen' && this.detailHouse) {
+        this.$nextTick(() => this.initDetailMap(this.detailHouse));
+      }
     },
 
     navigateDetail(dir) {
@@ -744,6 +769,7 @@ function app() {
       }
       this.detailHouse = null;
       this.editingModalAddress = false;
+      this.destroyDetailMap();
       document.body.style.overflow = '';
     },
 
@@ -780,6 +806,9 @@ function app() {
       if (this.mapView && this._markerMap) {
         this.updateMarkerColor(h);
       }
+      if (this._detailMapMarker) {
+        this.refreshDetailMarkerStyle();
+      }
     },
 
     async saveNotes(h, value) {
@@ -807,6 +836,9 @@ function app() {
         const m = this._markerMap[h.internal_id];
         if (m) { this._markerLayer.removeLayer(m); delete this._markerMap[h.internal_id]; }
       }
+      // Address changed → old coordinates are stale: drop the mini-map pin
+      // (the placeholder shows until the new address geocodes back).
+      this.updateDetailMap(h);
       this._savingAddressId = h.internal_id;
       this._savedAddressId = null;
       try {
@@ -849,6 +881,11 @@ function app() {
                   lat: updated.lat, lng: updated.lng, geocode_failed: updated.geocode_failed,
                 });
                 this._invalidateCache();
+                // New coordinates just arrived while the fullscreen modal is
+                // open: show / re-center the embedded mini map.
+                if (this.detailLayout === 'fullscreen' && this.detailHouse?.internal_id === houseId) {
+                  this.$nextTick(() => this.initDetailMap(this.detailHouse));
+                }
               }
             }
           } catch (e) { this._geocodingDetailHouseId = null; }

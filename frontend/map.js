@@ -35,6 +35,10 @@ const mapMethods = {
   _mapFocusHouse: null,
   _focusActive: false,
   _markerMap: {},
+  // Mini map embedded in the fullscreen house-detail modal.
+  _detailMap: null,
+  _detailMapMarker: null,
+  _detailRO: null,
   // Ctrl+drag rubber-band selection (desktop only).
   _boxEl: null,
   _boxStart: null,
@@ -550,6 +554,91 @@ const mapMethods = {
     this._pendingRedraw = false;
     this._mapUserMoved = false;
     this._focusActive = false;
+  },
+
+  // ── Detail-modal mini map ──────────────────────────────────────────────────
+  // Small Leaflet map embedded in the fullscreen house-detail modal, zoomed to
+  // the house address (like the "Ubicación" card on Zonaprop/Argenprop). Same
+  // markRaw rule as the main map (design decision 8): anything Leaflet hands
+  // back must stay outside Alpine's reactive proxies.
+  //
+  // The map is created lazily on first fullscreen open with a geocoded house
+  // and reused afterwards (same instance across prev/next navigation); only
+  // destroyDetailMap() tears it down.
+
+  async initDetailMap(h) {
+    if (!h || h.lat == null || h.lng == null) return;   // placeholder shows instead
+    try {
+      await this._loadLeaflet();
+    } catch (e) {
+      console.error(e);
+      return;
+    }
+    // The modal may have been closed (or layout toggled back to compact) while
+    // Leaflet was still downloading.
+    const el = document.getElementById('detail-map');
+    if (!el || !this.detailHouse) return;
+    if (this._detailMap) {
+      this._detailMap.invalidateSize({ animate: false });
+      this.updateDetailMap(h);
+      return;
+    }
+    this._detailMap = markRaw(L.map('detail-map', {
+      preferCanvas: true,
+      attributionControl: true,
+      scrollWheelZoom: false,   // page scroll must not get hijacked inside the modal
+    }).setView([h.lat, h.lng], 16));
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      maxZoom: 19,
+      fadeAnimation: false,
+      updateWhenZooming: false,
+      keepBuffer: 4,
+    }).addTo(this._detailMap);
+    this.updateDetailMap(h);
+    // The container can resize without a window event (layout toggle, font
+    // load, images loading above it): keep tiles crisp via ResizeObserver.
+    if (typeof ResizeObserver !== 'undefined') {
+      this._detailRO = new ResizeObserver(() => {
+        this._detailMap?.invalidateSize({ animate: false });
+      });
+      this._detailRO.observe(el);
+    }
+  },
+
+  // Re-center and restyle the mini map for the given house (or hide the marker
+  // when it has no coordinates yet).
+  updateDetailMap(h) {
+    if (!this._detailMap || !h) return;
+    if (h.lat == null || h.lng == null) {
+      if (this._detailMapMarker) {
+        this._detailMap.removeLayer(this._detailMapMarker);
+        this._detailMapMarker = null;
+      }
+      return;
+    }
+    this._detailMap.setView([h.lat, h.lng], 16, { animate: false });
+    if (this._detailMapMarker) {
+      this._detailMapMarker.setLatLng([h.lat, h.lng]);
+      this._detailMapMarker.setStyle(this.markerStyle(h));
+    } else {
+      this._detailMapMarker = markRaw(L.circleMarker([h.lat, h.lng], this.markerStyle(h)).addTo(this._detailMap));
+    }
+  },
+
+  // Keep the mini-map pin in sync when the review changes from the modal footer.
+  refreshDetailMarkerStyle() {
+    const h = this.detailHouse;
+    if (this._detailMapMarker && h) this._detailMapMarker.setStyle(this.markerStyle(h));
+  },
+
+  destroyDetailMap() {
+    if (this._detailRO) { this._detailRO.disconnect(); this._detailRO = null; }
+    if (this._detailMap) {
+      this._detailMap.remove();
+      this._detailMap = null;
+    }
+    this._detailMapMarker = null;
   },
 
   stopGeocoding() {

@@ -2036,7 +2036,7 @@
                 <div class="px-4 py-3 bg-red-50/50 dark:bg-red-900/10 space-y-2">
                   <div x-show="group.new_house.images?.length" class="flex gap-1.5 overflow-x-auto scrollbar-hide pb-1">
                     <template x-for="(img, ii) in (group.new_house.images || [])" :key="img">
-                      <img :src="img" @click="openLightbox(group.new_house.images, ii)"
+                      <img :src="thumbUrl ? thumbUrl(img) : img" :data-full="img" @error="if($event.target.dataset.full && $event.target.src !== $event.target.dataset.full){ $event.target.src = $event.target.dataset.full; $event.target.onerror = null; }" @click="openLightbox(group.new_house.images, ii)"
                         class="h-20 w-28 object-cover rounded-lg shrink-0 cursor-zoom-in hover:opacity-80 transition"
                         loading="lazy" />
                     </template>

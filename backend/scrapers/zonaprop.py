@@ -786,13 +786,13 @@ async def _wait_selector(page, selector: str, timeout: int) -> None:
 
 
 async def _wait_gallery(page, timeout: int) -> None:
-    """Wait for ≥2 gallery thumbnails to have a real src; fall back to portal container."""
+    """Hydration signal for the DOM fallback; the full gallery comes from the inline pictures blob."""
     try:
         await page.wait_for_function(_GALLERY_FUNC, timeout=timeout)
     except Exception:
         try:
             await page.wait_for_selector(
-                "#new-gallery-portal, #multimedia-content", timeout=4000
+                "#new-gallery-portal, #multimedia-content", timeout=2000
             )
         except Exception:
             pass
@@ -822,7 +822,14 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
             _wait_gallery(page, 8000),
         )
 
-        html = await page.content()
+        html = ""
+        try:
+            if resp is not None:
+                html = await resp.text()
+        except Exception:
+            html = ""
+        if not html:
+            html = await page.content()
         detail = _extract_detail(html)
 
         # Answered 200 but nothing extractable: either a challenge served at the
@@ -886,7 +893,7 @@ def _extract_detail(html: str) -> Dict[str, Any]:
     _set("address",           _get_address(soup, ld))
     _set("description",       _get_description(soup, ld))
     _set("amenities",         _get_amenities(soup))
-    _set("images",            _get_images(soup, ld))
+    _set("images",            _get_images(soup, ld, html))
 
     # ── Publisher ─────────────────────────────────────────────────────────────
     _set("real_estate",       _get_publisher(soup, ld))
@@ -1147,130 +1154,229 @@ def _get_amenities(soup: BeautifulSoup) -> Optional[List[str]]:
     return items[:20] if items else None
 
 
-def _get_images(soup: BeautifulSoup, ld: dict) -> Optional[List[str]]:
-    """Extract gallery images from the rendered page.
+# ══════════════════════════════════════════════════════════════════════════════
+# Gallery extraction — inline `pictures` blob first, then DOM/ld+json
+# ══════════════════════════════════════════════════════════════════════════════
 
-    _scrape_detail waits until ≥2 imageGrid thumbnails have their src set
-    before calling page.content(), so all images are present in the HTML.
-    """
-    def is_photo(url: str) -> bool:
-        return bool(url and isinstance(url, str) and url.startswith("http") and not re.search(r"\.svg(\?|$)", url, re.I))
+_IMAGE_URL_KEYS = (
+    "resizeUrl1200x1200",
+    "url1200x1200",
+    "resizeUrl720x532",
+    "url720x532",
+    "url730x532",
+    "resizeUrl360x266",
+    "url360x266",
+    "resizeUrl215x159",
+    "url215x159",
+    "url100x75",
+)
 
-    def extract_url(item):
-        if isinstance(item, str):
-            return item
-        if isinstance(item, dict):
-            for k in ("url", "src", "image", "fullUrl", "imageUrl", "urlImage", "uri", "href"):
-                v = item.get(k)
-                if isinstance(v, str):
-                    return v
+_PICTURES_KEY_RE = re.compile(r"""['"]pictures['"]\s*:\s*""")
+
+_NON_PHOTO_RE = re.compile(r"\.(?:svg|gif|mp4|webm|mov|m3u8)(?:[?#]|$)", re.I)
+
+
+def _is_photo_url(url: Any) -> bool:
+    """True for an absolute http(s) photo URL — never an icon, GIF or video."""
+    if not isinstance(url, str):
+        return False
+    if not url.startswith("http"):
+        return False
+    if _NON_PHOTO_RE.search(url):
+        return False
+    return True
+
+
+def _pick_picture_url(item: Dict[str, Any]) -> str:
+    """Best stored variant of one pictures entry (largest size first)."""
+    if not isinstance(item, dict):
         return ""
+    for key in _IMAGE_URL_KEYS:
+        url = item.get(key)
+        if _is_photo_url(url):
+            return url
+    for key, url in item.items():
+        if "url" in str(key).lower() and _is_photo_url(url):
+            return url
+    return ""
 
+
+def _basename_from_url(url: str) -> str:
+    if not isinstance(url, str):
+        return ""
+    # drop query string
+    if "?" in url:
+        url = url.split("?", 1)[0]
+    # normalize resize path to plain path for comparison
+    url = url.replace("/avisos/resize/", "/avisos/")
+    return url.rstrip("/").split("/")[-1]
+
+
+def _images_from_pictures(html: str, dom_names: Optional[Set[str]] = None) -> List[str]:
+    """Complete gallery from the inline pictures array, selected with DOM overlap."""
+    if not html:
+        return []
+
+    dom_names = dom_names or set()
+    decoder = json.JSONDecoder()
+    candidates: List[Dict[str, Any]] = []
+
+    for match in _PICTURES_KEY_RE.finditer(html):
+        # require only whitespace between key and '['
+        i = match.end()
+        while i < len(html) and html[i].isspace():
+            i += 1
+        if i >= len(html) or html[i] != '[':
+            continue
+        try:
+            items, _ = decoder.raw_decode(html, i)
+        except ValueError:
+            continue
+        if not isinstance(items, list):
+            continue
+        entries: List[Dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            mtype = item.get("multimediaTypeId")
+            if mtype is not None and str(mtype) != "2":
+                continue
+            entries.append(item)
+        if not entries:
+            continue
+        # sort by order only if every entry has an int order
+        if all(isinstance(e.get("order"), int) for e in entries):
+            entries_sorted = sorted(entries, key=lambda it: it.get("order", 0))
+        else:
+            entries_sorted = list(entries)
+        urls = [url for url in map(_pick_picture_url, entries_sorted) if url]
+        if not urls:
+            continue
+        # overlap with DOM mosaic basenames
+        cand_names = {_basename_from_url(u) for u in urls}
+        overlap = len(cand_names & dom_names) if dom_names else 0
+        candidates.append(
+            {
+                "urls": urls,
+                "overlap": overlap,
+                "is_sq": html[match.start() - 1 : match.start() + 1].strip().startswith("'"),
+                "start": match.start(),
+            }
+        )
+
+    if not candidates:
+        return []
+
+    def score(c: Dict[str, Any]):
+        if dom_names:
+            return (c["overlap"], len(c["urls"]), -c["start"])
+        # prefer first single-quoted match, then longest
+        return (1 if c["is_sq"] else 0, len(c["urls"]), -c["start"])
+
+    best = max(candidates, key=score)
+    return _dedupe_images(best["urls"])
+
+
+def _images_from_dom(soup: BeautifulSoup) -> List[str]:
     collected: List[str] = []
     media_root = soup.find(id="multimedia-content") or soup.find(id="new-gallery-portal")
+    if not media_root:
+        return collected
 
-    if media_root:
-        # <img> tags (including srcset)
-        for img in media_root.find_all("img"):
-            for attr in ["src", "data-src", "data-lazy-src", "currentSrc"]:
-                src = img.get(attr) or ""
-                if src and is_photo(src) and src not in collected:
-                    collected.append(src)
-            for attr in ["srcset", "data-srcset"]:
-                srcset = img.get(attr) or ""
-                if not srcset:
+    for img in media_root.find_all("img"):
+        for attr in ["src", "data-src", "data-lazy-src", "currentSrc"]:
+            src = img.get(attr) or ""
+            if _is_photo_url(src) and src not in collected:
+                collected.append(src)
+        for attr in ["srcset", "data-srcset"]:
+            srcset = img.get(attr) or ""
+            if not srcset:
+                continue
+            for entry in srcset.split(","):
+                parts = entry.strip().split()
+                if parts and _is_photo_url(parts[0]) and parts[0] not in collected:
+                    collected.append(parts[0])
+
+    for el in media_root.find_all(class_=re.compile(r"imageGrid-module__imgProperty", re.I)):
+        style = el.get("style") or ""
+        if 'url(' in style:
+            try:
+                start = style.find('url(') + 4
+                if start < len(style) and style[start] in ("'", '"'):
+                    start += 1
+                end = style.find(")", start)
+                if end == -1:
                     continue
-                for entry in srcset.split(","):
-                    parts = entry.strip().split()
-                    if parts and is_photo(parts[0]) and parts[0] not in collected:
-                        collected.append(parts[0])
+                url_cand = style[start:end].strip().strip("'").strip('"')
+                if _is_photo_url(url_cand) and url_cand not in collected:
+                    collected.append(url_cand)
+            except Exception:
+                pass
+        for attr in ["data-src", "data-url", "data-image"]:
+            v = el.get(attr) or ""
+            if _is_photo_url(v) and v not in collected:
+                collected.append(v)
+    return collected
 
-        # background-image divs
-        for el in media_root.find_all(class_=re.compile(r"imageGrid-module__imgProperty", re.I)):
-            style = el.get("style") or ""
-            # simple extraction
-            if 'url(' in style:
-                try:
-                    start = style.find('url(') + 4
-                    # skip quotes
-                    if style[start] in ("'", '"'):
-                        start += 1
-                    end = style.find(")", start)
-                    if end == -1: continue
-                    url_cand = style[start:end].strip().strip("'").strip('"')
-                    if is_photo(url_cand) and url_cand not in collected:
-                        collected.append(url_cand)
-                except Exception:
-                    pass
-            for attr in ["data-src", "data-url", "data-image"]:
-                v = el.get(attr) or ""
-                if v and is_photo(v) and v not in collected:
-                    collected.append(v)
 
-    # Try __NEXT_DATA__ for full gallery
-    if not collected:
-        try:
-            nd_tag = soup.find("script", id="__NEXT_DATA__")
-            if nd_tag and nd_tag.string:
-                nd = json.loads(nd_tag.string)
-                def find_photo_arrays(obj, depth=0):
-                    if depth > 12 or not isinstance(obj, (dict, list)):
-                        return []
-                    if isinstance(obj, list):
-                        urls = [u for u in map(extract_url, obj) if is_photo(u)]
-                        found = [urls] if len(urls) > 1 else []
-                        for v in obj:
-                            found.extend(find_photo_arrays(v, depth + 1))
-                        return found
-                    results = []
-                    for v in obj.values():
-                        results.extend(find_photo_arrays(v, depth + 1))
-                    return results
-                candidates = find_photo_arrays(nd)
-                if candidates:
-                    best = max(candidates, key=len)
-                    for u in best:
-                        if u not in collected:
-                            collected.append(u)
-        except Exception:
-            pass
-
-    if collected:
-        return _dedupe_images(collected)
-
-    # Fallback: ld+json
-    img_data = ld.get("image")
-    if isinstance(img_data, str) and is_photo(img_data):
+def _images_from_ld(ld: dict) -> List[str]:
+    result: List[str] = []
+    img_data = ld.get("image") if isinstance(ld, dict) else None
+    if isinstance(img_data, str) and _is_photo_url(img_data):
         return [img_data]
     if isinstance(img_data, list):
-        result = []
         for i in img_data:
-            if isinstance(i, str) and is_photo(i):
+            if isinstance(i, str) and _is_photo_url(i):
                 result.append(i)
             elif isinstance(i, dict):
                 for k in ("url", "contentUrl"):
                     u = i.get(k)
-                    if isinstance(u, str) and is_photo(u):
+                    if isinstance(u, str) and _is_photo_url(u):
                         result.append(u)
                         break
-        return result[:40] if result else None
-    return None
+        return result
+    return []
+
+
+def _get_images(soup: BeautifulSoup, ld: dict, html: str = "") -> Optional[List[str]]:
+    """Gallery for a detail page, richest source first (pictures -> DOM -> ld+json)."""
+    dom_list = _images_from_dom(soup)
+    dom_names = {_basename_from_url(u) for u in dom_list}
+    sources = (
+        ("pictures", _images_from_pictures(html, dom_names)),
+        ("dom", dom_list),
+        ("ld+json", _images_from_ld(ld)),
+    )
+    source, images = max(sources, key=lambda pair: len(pair[1]))
+    if not images:
+        return None
+    if source != "pictures":
+        logger.debug("ZP gallery: %s supplied the photos (%d)", source, len(images))
+    limit = getattr(settings, "max_gallery_images", 60)
+    return images[: limit] if limit else images
 
 
 def _dedupe_images(urls: List[str]) -> List[str]:
-    """Deduplicate image URLs, preferring the highest resolution variant.
-
-    Zonaprop CDN uses paths like /560x420/ or /1024x768/ in the URL.
-    We normalise the size segment to a placeholder key and keep the largest.
-    """
+    """Deduplicate image URLs, preferring the highest resolution variant."""
     seen: Dict[str, dict] = {}
     for url in urls:
-        key = re.sub(r"/\d{2,4}x\d{2,4}/", "/SIZE/", url)
+        if not isinstance(url, str):
+            continue
+        # strip query and normalize resize/plain path for key
+        u = url.split("?", 1)[0]
+        u = u.replace("/avisos/resize/", "/avisos/")
+        key = re.sub(r"/\d{2,4}x\d{2,4}/", "/SIZE/", u)
         size_m = re.search(r"/(\d+)x\d+/", url)
         size = int(size_m.group(1)) if size_m else 0
-        if key not in seen or size > seen[key]["size"]:
-            seen[key] = {"url": url, "size": size}
-    return [v["url"] for v in seen.values()][:40]
+        # prefer /resize/ variant on size tie
+        prefer_resize = "/avisos/resize/" in url
+        if key not in seen:
+            seen[key] = {"url": url, "size": size, "resize": prefer_resize}
+        else:
+            old = seen[key]
+            if size > old["size"] or (size == old["size"] and prefer_resize and not old["resize"]):
+                seen[key] = {"url": url, "size": size, "resize": prefer_resize}
+    return [v["url"] for v in seen.values()]
 
 
 def _get_publisher(soup: BeautifulSoup, ld: dict) -> Optional[str]:
