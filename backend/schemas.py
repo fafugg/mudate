@@ -37,6 +37,7 @@ class HouseDict(TypedDict, total=False):
     internal_id: str
     search_engine_id: Optional[str]
     search_engine: str
+    remax_entity_id: Optional[str]
     session_id: str
     # Property specs
     type: Optional[str]

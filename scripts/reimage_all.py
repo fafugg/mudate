@@ -9,10 +9,9 @@ only carries a thumbnail (MercadoLibre: 1 image, Argenprop: <= 5).  Whatever is
 stored is what the user sees, so a clobbering bug or a blocked run that lost the
 detail-page photos stays lost until something re-visits the page.
 
-This tool re-visits every house with the very same ``_scrape_detail`` the
-scraper for that engine uses, so it sees exactly what a run sees, and writes the
-result under the shrink-proof rule of ``house_fields.sync_mutable_fields``: a
-stored gallery is only replaced by one at least as long.  An empty or shorter
+This tool re-visits every house with the same per-engine detail extractor used
+by the scraper and writes the result under the shrink-proof replacement rule:
+a stored gallery is only replaced by one at least as long. An empty or shorter
 result is never written, so re-running can never degrade a record.
 
 Only ``images`` and ``last_updated`` change.  Price, surfaces, price history,
@@ -20,13 +19,11 @@ review, notes, geo-coordinates and the publish-tracking fields are never
 touched, and a house whose gallery is already as full as the page is left
 completely untouched.
 
-Remax is not processed: its gallery travels in the search card and the detail
-API needs an entity id that db.json does not store.
-
 Usage (from anywhere):
     python scripts/reimage_all.py --dry-run                 # preview targets
     python scripts/reimage_all.py                           # all active houses
     python scripts/reimage_all.py --engine mercadolibre     # one portal
+    python scripts/reimage_all.py --engine remax            # API-backed portal
     python scripts/reimage_all.py --max-images 4            # only thin galleries
     python scripts/reimage_all.py --include-removed         # also status=removed
     python scripts/reimage_all.py --limit 20 --batch 10     # a quick sample
@@ -60,10 +57,8 @@ from playwright.async_api import async_playwright
 from config import settings
 from storage import _now, atomic_update, read_db
 
-# Engines whose gallery lives on a detail page we can open, in the order we
-# process them (fastest / most affected first).
-PAGE_ENGINES = ("mercadolibre", "argenprop", "zonaprop")
-SKIPPED_ENGINES = ("remax",)
+# Supported engines, in processing order (fastest / most affected first).
+SUPPORTED_ENGINES = ("mercadolibre", "argenprop", "zonaprop", "remax")
 
 _INIT_SCRIPT = "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
 
@@ -72,12 +67,14 @@ def _detail_fetchers() -> Dict[str, Callable]:
     """Per-engine detail extractor — the scraper's own, never a copy."""
     from scrapers.argenprop import _scrape_detail as argenprop_detail
     from scrapers.mercadolibre import _scrape_detail as mercadolibre_detail
+    from scrapers.remax import _fetch_detail_api as remax_detail
     from scrapers.zonaprop import _scrape_detail as zonaprop_detail
 
     return {
         "mercadolibre": mercadolibre_detail,
         "zonaprop": zonaprop_detail,
         "argenprop": argenprop_detail,
+        "remax": remax_detail,
     }
 
 
@@ -112,6 +109,24 @@ def select_targets(
             continue
         out[engine].append((hid, house))
     return {engine: pairs for engine, pairs in out.items() if pairs}
+
+
+def _remax_filters_by_session(db: dict) -> Dict[str, List[str]]:
+    """Collect saved Remax search filters so legacy entity IDs can be recovered."""
+    filters: Dict[str, List[str]] = {}
+    for user in db.get("users", {}).values():
+        for session_id, session in user.get("sessions", {}).items():
+            session_filters = [
+                source.get("filter")
+                for source in session.get("search_sources", [])
+                if source.get("engine") == "remax" and source.get("filter")
+            ]
+            if session_filters:
+                filters.setdefault(session_id, []).extend(session_filters)
+    return {
+        session_id: list(dict.fromkeys(session_filters))
+        for session_id, session_filters in filters.items()
+    }
 
 
 def replacement(
@@ -156,8 +171,30 @@ def _write_batch(updates: List[Tuple[str, List[str]]], log) -> None:
 # ── One engine ───────────────────────────────────────────────────────────
 
 
-async def _images_from_detail(page, fetcher, url: str) -> Optional[List[str]]:
-    detail = await fetcher(page, url)
+async def _images_from_detail(
+    page,
+    engine: str,
+    fetcher,
+    house: dict,
+    resolved_entity_ids: Optional[Dict[str, str]] = None,
+) -> Optional[List[str]]:
+    if engine == "remax":
+        from scrapers.remax import _resolve_remax_entity_id
+
+        entity_id = house.get("remax_entity_id")
+        search_engine_id = str(house.get("search_engine_id") or "")
+        if not entity_id and resolved_entity_ids:
+            entity_id = resolved_entity_ids.get(search_engine_id)
+        if not entity_id:
+            entity_id = await _resolve_remax_entity_id(
+                page, house["url"], search_engine_id
+            )
+        if not entity_id:
+            return None
+        detail = await fetcher(entity_id)
+        return detail.get("images") if isinstance(detail, dict) else None
+
+    detail = await fetcher(page, house["url"])
     if not isinstance(detail, dict):
         return None
     return detail.get("images")
@@ -217,7 +254,13 @@ async def _open_engine(pw, engine: str):
 
 
 async def process_engine(
-    pw, engine: str, pairs: List[Tuple[str, dict]], args, fetchers, log
+    pw,
+    engine: str,
+    pairs: List[Tuple[str, dict]],
+    args,
+    fetchers,
+    log,
+    remax_filters_by_session: Optional[Dict[str, List[str]]] = None,
 ) -> dict:
     stats = {"ok": 0, "confirmed": 0, "no_data": 0, "errors": 0, "blocked": 0, "aborted": 0}
     browser, context, headless, profile = await _open_engine(pw, engine)
@@ -232,6 +275,48 @@ async def process_engine(
     sem = asyncio.Semaphore(args.concurrency)
     state = {"blocks_in_a_row": 0, "stop": False}
     batch: List[Tuple[str, List[str]]] = []
+    resolved_entity_ids: Dict[str, str] = {}
+
+    if engine == "remax":
+        missing_ids = {
+            str(house.get("search_engine_id") or "")
+            for _, house in pairs
+            if not house.get("remax_entity_id") and house.get("search_engine_id")
+        }
+        filters = list(dict.fromkeys(
+            search_filter
+            for _, house in pairs
+            for search_filter in (remax_filters_by_session or {}).get(
+                str(house.get("session_id") or ""), []
+            )
+        ))
+        if not filters and remax_filters_by_session:
+            filters = list(dict.fromkeys(
+                search_filter
+                for session_filters in remax_filters_by_session.values()
+                for search_filter in session_filters
+            ))
+        if missing_ids and filters:
+            lookup_page = await context.new_page()
+            try:
+                from scrapers.remax import _resolve_remax_entity_ids_from_searches
+
+                resolved_entity_ids = await _resolve_remax_entity_ids_from_searches(
+                    lookup_page, filters, missing_ids
+                )
+                log(
+                    f"  remax: recovered {len(resolved_entity_ids)}/{len(missing_ids)} "
+                    "legacy entity IDs from saved searches"
+                )
+            except blocked_type:
+                log("  remax: saved-search lookup was blocked; trying per-listing recovery")
+            except Exception as exc:
+                log(
+                    "  remax: saved-search lookup failed "
+                    f"({type(exc).__name__}); trying per-listing recovery"
+                )
+            finally:
+                await lookup_page.close()
 
     async def process_one(hid: str, house: dict) -> Tuple[str, str, Optional[List[str]], int, str]:
         async with sem:
@@ -241,7 +326,9 @@ async def process_engine(
                 await asyncio.sleep(args.delay)
             page = await context.new_page()
             try:
-                fetched = await _images_from_detail(page, fetcher, house["url"])
+                fetched = await _images_from_detail(
+                    page, engine, fetcher, house, resolved_entity_ids
+                )
                 state["blocks_in_a_row"] = 0
             except Exception as exc:
                 if isinstance(exc, blocked_type):
@@ -314,7 +401,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--engine",
         action="append",
-        choices=list(PAGE_ENGINES) + ["all"],
+        choices=list(SUPPORTED_ENGINES) + ["all"],
         default=None,
         help="Portal to re-image (repeatable; default: all supported)",
     )
@@ -363,10 +450,10 @@ async def main() -> None:
     if args.headless:
         os.environ["PLAYWRIGHT_HEADLESS"] = "1"
 
-    engines = PAGE_ENGINES
+    engines = SUPPORTED_ENGINES
     if args.engine:
         chosen = [e for e in args.engine if e != "all"]
-        engines = tuple(e for e in PAGE_ENGINES if e in chosen) or PAGE_ENGINES
+        engines = tuple(e for e in SUPPORTED_ENGINES if e in chosen) or SUPPORTED_ENGINES
 
     log_file = None
     if args.log:
@@ -380,6 +467,7 @@ async def main() -> None:
 
     db = read_db()
     houses = db.get("houses", {})
+    remax_filters_by_session = _remax_filters_by_session(db)
     targets = select_targets(
         houses,
         engines,
@@ -390,8 +478,6 @@ async def main() -> None:
 
     log(f"=== reimage_all · {_now()} ===")
     log(f"db: {len(houses)} houses · engines: {', '.join(engines)}")
-    if SKIPPED_ENGINES:
-        log(f"not processed (gallery is not on a retrievable detail page): {', '.join(SKIPPED_ENGINES)}")
     for engine in engines:
         log(f"  {engine}: {len(targets.get(engine, []))} target houses")
 
@@ -417,13 +503,15 @@ async def main() -> None:
         fetchers = _detail_fetchers()
         totals = {k: 0 for k in ("ok", "confirmed", "no_data", "errors", "blocked", "aborted")}
         async with async_playwright() as pw:
-            for engine in PAGE_ENGINES:
+            for engine in SUPPORTED_ENGINES:
                 pairs = targets.get(engine)
                 if not pairs:
                     continue
                 if args.limit:
                     pairs = pairs[: args.limit]
-                stats = await process_engine(pw, engine, pairs, args, fetchers, log)
+                stats = await process_engine(
+                    pw, engine, pairs, args, fetchers, log, remax_filters_by_session
+                )
                 for key in stats:
                     totals[key] = totals.get(key, 0) + stats[key]
 

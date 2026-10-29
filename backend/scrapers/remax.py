@@ -4,9 +4,11 @@ import logging
 import re
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set
+from urllib.parse import urlparse
 
 import httpx
 
+from config import settings
 from .base import (
     BLOCK_STATUSES,
     BaseScraper,
@@ -43,6 +45,105 @@ TYPE_MAP = {
 
 PAGE_SIZE = 24
 MAX_PAGES = 500
+MAX_GALLERY_IMAGES = settings.max_gallery_images
+
+
+def _remax_image_url(photo: Any) -> Optional[str]:
+    """Resolve a Remax photo record to its best URL exposed by the API."""
+    is_full_size = False
+    if isinstance(photo, str):
+        raw = photo
+    elif isinstance(photo, dict):
+        for key in (
+            "originalValue", "originalUrl", "fullValue", "fullUrl",
+            "largeValue", "largeUrl",
+        ):
+            value = photo.get(key)
+            if isinstance(value, str) and value.strip():
+                raw = value
+                is_full_size = True
+                break
+        else:
+            raw = next(
+                (
+                    photo[key]
+                    for key in ("url", "image", "src")
+                    if isinstance(photo.get(key), str)
+                    and photo[key].strip().startswith(("http://", "https://"))
+                ),
+                "",
+            )
+        if not raw:
+            for key in ("rawValue", "url", "image", "src"):
+                value = photo.get(key)
+                if isinstance(value, str) and value.strip():
+                    raw = value
+                    break
+    else:
+        return None
+
+    raw = raw.strip()
+    if not raw:
+        return None
+    if raw.startswith(("http://", "https://")):
+        return raw
+
+    parts = raw.strip("/").split("/")
+    if len(parts) >= 3 and parts[0] == "listings":
+        if re.fullmatch(r"\d+x\d+", parts[2]):
+            return f"{REMAX_CDN}{raw.lstrip('/')}"
+        entity_id, image = parts[1], parts[2]
+        has_extension = bool(re.search(r"\.[a-z0-9]+(?:\?|$)", image, re.IGNORECASE))
+        if not has_extension:
+            image += ".webp"
+        size = "860x440/" if not is_full_size and not has_extension else ""
+        return f"{REMAX_CDN}listings/{entity_id}/{size}{image}"
+    return f"{REMAX_CDN}{raw.lstrip('/')}"
+
+
+def _remax_image_key(url: str) -> str:
+    """Treat resized CDN variants of the same photo as one gallery item."""
+    parsed = urlparse(url)
+    parts = [part for part in parsed.path.split("/") if part]
+    parts = [part for part in parts if not re.fullmatch(r"\d+x\d+", part)]
+    return f"{parsed.netloc.lower()}/{'/'.join(parts)}".lower()
+
+
+def _remax_image_score(url: str) -> int:
+    """Rank known image variants, preferring explicit originals and larger sizes."""
+    lowered = url.lower()
+    if any(token in lowered for token in ("original", "fullsize", "full-size")):
+        return 10**12
+    if any(token in lowered for token in ("thumbnail", "thumb", "preview", "small")):
+        return -1
+    parsed = urlparse(url)
+    for part in parsed.path.split("/"):
+        match = re.fullmatch(r"(\d+)x(\d+)", part)
+        if match:
+            return int(match.group(1)) * int(match.group(2))
+    return 10**9
+
+
+def _extract_remax_images(photos: Any) -> List[str]:
+    """Extract unique photo URLs, preferring the best available variant."""
+    if not isinstance(photos, list):
+        return []
+
+    images: List[str] = []
+    positions: Dict[str, int] = {}
+    for photo in photos:
+        url = _remax_image_url(photo)
+        if not url:
+            continue
+        key = _remax_image_key(url)
+        if key in positions:
+            position = positions[key]
+            if _remax_image_score(url) > _remax_image_score(images[position]):
+                images[position] = url
+            continue
+        positions[key] = len(images)
+        images.append(url)
+    return images[:MAX_GALLERY_IMAGES]
 
 
 class RemaxScraper(BaseScraper):
@@ -173,7 +274,15 @@ class RemaxScraper(BaseScraper):
                     entity_id = card.get("_entity_id")
                     if entity_id:
                         detail = await _fetch_detail_api(entity_id)
-                        card.update({k: v for k, v in detail.items() if v is not None})
+                        for key, value in detail.items():
+                            if value is None:
+                                continue
+                            if key == "images" and isinstance(value, list):
+                                card[key] = _extract_remax_images(
+                                    [*(card.get(key) or []), *value]
+                                )
+                            else:
+                                card[key] = value
 
                     card["price_per_m2"] = self.compute_price_per_m2(
                         card.get("price"), card.get("covered_m2") or card.get("total_m2")
@@ -318,33 +427,7 @@ def _parse_remax_listing(item: dict) -> Optional[Dict[str, Any]]:
             except Exception:
                 published_at = str(created)[:10]
 
-        # Images - Remax rawValue is missing resolution and .webp extension
-        # Format: listings/{entity_id}/{hash} → listings/{entity_id}/860x440/{hash}.webp
-        images = []
-        photos = item.get("photos", [])
-        if isinstance(photos, list):
-            for photo in photos:
-                if isinstance(photo, dict):
-                    raw = photo.get("rawValue", "")
-                    if raw:
-                        if raw.startswith("http"):
-                            images.append(raw)
-                        else:
-                            # Add resolution and .webp extension if missing
-                            # raw = "listings/{entity_id}/{hash}"
-                            # result = "{CDN}listings/{entity_id}/860x440/{hash}.webp"
-                            if not raw.endswith(".webp"):
-                                # Split into parts: ["listings", "{entity_id}", "{hash}"]
-                                parts = raw.split("/")
-                                if len(parts) >= 3:
-                                    entity_id_part = parts[1]
-                                    hash_part = parts[2]
-                                    images.append(f"{REMAX_CDN}listings/{entity_id_part}/860x440/{hash_part}.webp")
-                                else:
-                                    images.append(f"{REMAX_CDN}{raw}")
-                            else:
-                                images.append(f"{REMAX_CDN}{raw}")
-        images = images[:80] if images else None
+        images = _extract_remax_images(item.get("photos")) or None
 
         # Lat/Lng
         location = item.get("location", {})
@@ -472,34 +555,11 @@ async def _fetch_detail_api(entity_id: str) -> Dict[str, Any]:
                         }
                         result["condition"] = cond_map.get(cond_value, cond_value)
 
-            # Photos (full resolution from detail API)
-            # Remax rawValue is missing resolution and .webp extension
+            # Photos from the detail API are authoritative; retain every distinct photo.
             photos = listing.get("photos", []) or listing.get("images", []) or []
-            if isinstance(photos, list) and photos:
-                images = []
-                for photo in photos:
-                    if isinstance(photo, str):
-                        raw = photo
-                    elif isinstance(photo, dict):
-                        raw = photo.get("rawValue") or photo.get("url") or photo.get("image") or photo.get("src") or ""
-                    else:
-                        continue
-                    if raw:
-                        if raw.startswith("http"):
-                            images.append(raw)
-                        else:
-                            if not raw.endswith(".webp"):
-                                parts = raw.split("/")
-                                if len(parts) >= 3:
-                                    entity_id_part = parts[1]
-                                    hash_part = parts[2]
-                                    images.append(f"{REMAX_CDN}listings/{entity_id_part}/860x440/{hash_part}.webp")
-                                else:
-                                    images.append(f"{REMAX_CDN}{raw}")
-                            else:
-                                images.append(f"{REMAX_CDN}{raw}")
-                if images:
-                    result["images"] = images[:80]
+            images = _extract_remax_images(photos)
+            if images:
+                result["images"] = images
 
             # Agent phone
             associate = listing.get("associate", {})
@@ -517,3 +577,106 @@ async def _fetch_detail_api(entity_id: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error("REMAX API error %s: %s: %s", entity_id, type(e).__name__, e)
         return {}
+
+
+def _find_remax_entity_id(
+    state: Any, search_engine_id: Optional[str], url: str
+) -> Optional[str]:
+    """Find a listing's API entity ID in a detail page's serialized ng-state."""
+    target_id = str(search_engine_id or "")
+    target_slug = urlparse(url).path.rstrip("/").rsplit("/", 1)[-1]
+    matches: List[str] = []
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            entity_id = value.get("entityId")
+            if entity_id:
+                item_id = str(value.get("id") or "")
+                slug = str(value.get("slug") or "")
+                item_slug = (
+                    urlparse(str(value.get("url") or "")).path.rstrip("/").rsplit("/", 1)[-1]
+                )
+                if (
+                    (target_id and item_id == target_id)
+                    or (target_slug and slug == target_slug)
+                    or (target_slug and item_slug == target_slug)
+                ):
+                    matches.append(str(entity_id))
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(state)
+    unique = list(dict.fromkeys(matches))
+    return unique[0] if len(unique) == 1 else None
+
+
+async def _resolve_remax_entity_id(page, url: str, search_engine_id: Optional[str]) -> Optional[str]:
+    """Resolve the API entity ID for legacy records that predate its persistence."""
+    response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    status = response.status if response else None
+    if status in BLOCK_STATUSES:
+        raise engine_blocked_error("Remax", f"HTTP {status}")
+    marker = await challenge_marker_in_page(page)
+    if marker:
+        raise engine_blocked_error("Remax", f"desafío de Cloudflare ({marker})")
+
+    state = await page.evaluate("""() => {
+        const el = document.getElementById('ng-state');
+        if (!el) return null;
+        try { return JSON.parse(el.textContent); } catch (e) { return null; }
+    }""")
+    entity_id = _find_remax_entity_id(state, search_engine_id, url)
+    if not entity_id:
+        logger.info("Remax entity ID not found in detail page state: %s", url[-80:])
+    return entity_id
+
+
+async def _resolve_remax_entity_ids_from_searches(
+    page,
+    search_filters: List[str],
+    target_ids: Set[str],
+    *,
+    max_pages: int = 20,
+    delay: float = 0.5,
+) -> Dict[str, str]:
+    """Resolve legacy entity IDs from saved searches, within a bounded page budget."""
+    scraper = RemaxScraper()
+    resolved: Dict[str, str] = {}
+    for search_filter in dict.fromkeys(search_filters):
+        if target_ids.issubset(resolved):
+            break
+        total_pages = 1
+        for page_index in range(min(MAX_PAGES, max_pages)):
+            response = await page.goto(
+                scraper._page_url(search_filter, page_index),
+                wait_until="domcontentloaded",
+                timeout=30000,
+            )
+            status = response.status if response else None
+            if status in BLOCK_STATUSES:
+                raise engine_blocked_error("Remax", f"HTTP {status}")
+            marker = await challenge_marker_in_page(page)
+            if marker:
+                raise engine_blocked_error("Remax", f"desafío de Cloudflare ({marker})")
+
+            state = await page.evaluate("""() => {
+                const el = document.getElementById('ng-state');
+                if (!el) return null;
+                try { return JSON.parse(el.textContent); } catch (e) { return null; }
+            }""")
+            listings, total_pages, _ = scraper._parse_ng_state(state)
+            if not listings:
+                break
+            for listing in listings:
+                listing_id = str(listing.get("search_engine_id") or "")
+                entity_id = listing.get("_entity_id")
+                if listing_id in target_ids and entity_id:
+                    resolved[listing_id] = str(entity_id)
+            if target_ids.issubset(resolved) or page_index + 1 >= total_pages:
+                break
+            if delay:
+                await asyncio.sleep(delay)
+    return resolved

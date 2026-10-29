@@ -8,6 +8,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from .base import BaseScraper, UA, coerce_float, coerce_int
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -447,44 +448,155 @@ _IMAGES_READY_JS = """() => {
 # left every listing on the new layout with no images, so both are collected —
 # one URL per img (zoom when present, src otherwise) so a preview is never
 # stored next to its own full-size copy.
+_OPEN_GALLERY_JS = """() => {
+    const candidates = document.querySelectorAll(
+        'button, [role="button"], a[class*="gallery"], a[class*="photo"]'
+    );
+    for (const el of candidates) {
+        const rect = el.getBoundingClientRect();
+        if (!rect.width || !rect.height) continue;
+        const label = `${el.innerText || ''} ${el.getAttribute('aria-label') || ''}`.trim();
+        if (/^\\d+\\s*fotos?$/i.test(label) ||
+            /ver\\s+(todas\\s+)?(las\\s+)?fotos?/i.test(label) ||
+            /\\d+\\s*fotos?/i.test(label)) {
+            el.click();
+            return true;
+        }
+    }
+    return false;
+}"""
+
 _GALLERY_IMAGES_JS = """() => {
-    const out = [];
-    const push = (u) => {
+    const byPhoto = new Map();
+    const push = (u, preferred = false) => {
         if (!u || typeof u !== 'string') return;
         if (!u.startsWith('http')) return;
         if (/\.svg(\?|$)/i.test(u)) return;
         if (u.includes('photo_placeholder')) return;
         if (u.includes('similar')) return;
-        if (!out.includes(u)) out.push(u);
+        if (/recommendation|recomendad/i.test(u)) return;
+        const clean = u.split('?')[0];
+        const key = clean.replace(/-[OF](?:-[^./?]+)?(?=\.(?:jpe?g|png|webp)$)/i, '');
+        const isFull = preferred || /-F(?:-[^./?]+)?\.(?:jpe?g|png|webp)(?:\?|$)/i.test(u);
+        const current = byPhoto.get(key);
+        if (!current || (isFull && !current.preferred)) {
+            byPhoto.set(key, {url: u, preferred: isFull});
+        }
     };
-    // New layout
+    // Prefer the full-size zoom URL over the image's thumbnail src.
     for (const img of document.querySelectorAll('img.ui-pdp-gallery__figure__image')) {
-        push(img.getAttribute('data-zoom') || img.getAttribute('src'));
+        if (img.matches('[class*="recommend"], [class*="similar"]') ||
+            img.closest('[class*="recommend"], [class*="similar"]')) continue;
+        const zoom = img.getAttribute('data-zoom');
+        push(zoom || img.getAttribute('src'), !!zoom);
     }
-    // Legacy layout
     for (const img of document.querySelectorAll('img.gallery-image__image')) {
+        if (img.matches('[class*="recommend"], [class*="similar"]') ||
+            img.closest('[class*="recommend"], [class*="similar"]')) continue;
         push(img.getAttribute('src'));
     }
-    // Other possible selectors
-    for (const img of document.querySelectorAll('.ui-pdp-gallery img, .slick-slide img, [class*="gallery"] img')) {
-        push(img.getAttribute('data-zoom') || img.getAttribute('src') || img.getAttribute('data-src'));
+    // Expanded gallery/dialog layouts and thumbnail strips.
+    for (const img of document.querySelectorAll(
+        '.ui-pdp-gallery img, [role="dialog"] img, [class*="gallery"] img, ' +
+        '[class*="modal"] img, .slick-slide img'
+    )) {
+        if (img.matches('[class*="recommend"], [class*="similar"]') ||
+            img.closest('[class*="recommend"], [class*="similar"]')) continue;
+        const zoom = img.getAttribute('data-zoom');
+        push(zoom || img.getAttribute('src') || img.getAttribute('data-src'), !!zoom);
     }
-    // Background images
     for (const el of document.querySelectorAll('[class*="gallery"] [style*="background"], .ui-pdp-gallery [style*="background"]')) {
         const style = el.getAttribute('style') || '';
         const m = style.match(/url\((https?:\/\/[^)]+)\)/);
         if (m) push(m[1]);
     }
-    // srcset
-    for (const img of document.querySelectorAll('img')) {
+    // Last-resort lazy/source attributes, excluding unrelated recommendations.
+    for (const img of document.querySelectorAll('[class*="gallery"] img, [role="dialog"] img')) {
+        if (img.matches('[class*="recommend"], [class*="similar"]') ||
+            img.closest('[class*="recommend"], [class*="similar"]')) continue;
         const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset') || '';
         srcset.split(',').forEach(entry => {
             const parts = entry.trim().split(/\s+/);
             if (parts[0]) push(parts[0]);
         });
     }
-    return out.slice(0, 80);
+    return [...byPhoto.values()].map(item => item.url).slice(0, 80);
 }"""
+
+_SCROLL_GALLERY_JS = """() => {
+    const roots = [...document.querySelectorAll(
+        '[role="dialog"], [class*="gallery"], [class*="modal"]'
+    )].filter(el => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+    });
+    const root = roots.sort((a, b) =>
+        b.querySelectorAll('img').length - a.querySelectorAll('img').length
+    )[0];
+    if (!root) return false;
+    const scrollable = [...root.querySelectorAll('*'), root].find(el =>
+        el.scrollHeight > el.clientHeight + 20
+    );
+    if (!scrollable) return false;
+    const before = scrollable.scrollTop;
+    scrollable.scrollTop = Math.min(
+        before + Math.max(scrollable.clientHeight * 0.8, 300),
+        scrollable.scrollHeight
+    );
+    return scrollable.scrollTop !== before;
+}"""
+
+
+async def _expand_gallery(page) -> None:
+    """Open MercadoLibre's photo-count control and reveal lazy gallery images."""
+    try:
+        opened = await page.evaluate(_OPEN_GALLERY_JS)
+        if not opened:
+            return
+        await page.wait_for_timeout(600)
+        previous_count = 0
+        unchanged = 0
+        for _ in range(12):
+            count = len(await page.evaluate(_GALLERY_IMAGES_JS))
+            if count == previous_count:
+                unchanged += 1
+                if unchanged >= 2:
+                    break
+            else:
+                unchanged = 0
+                previous_count = count
+            if not await page.evaluate(_SCROLL_GALLERY_JS):
+                break
+            await page.wait_for_timeout(150)
+    except Exception as e:
+        logger.debug("ML gallery expansion failed: %s: %s", type(e).__name__, e)
+
+
+def _merge_gallery_images(*galleries: List[str]) -> List[str]:
+    """Deduplicate gallery URLs by photo identity, keeping full-size variants."""
+    images: List[str] = []
+    positions: Dict[str, int] = {}
+    full_variant = re.compile(r"-F(?:-[^./?]+)?\.(?:jpe?g|png|webp)(?:\?|$)", re.I)
+    for gallery in galleries:
+        for url in gallery:
+            if not isinstance(url, str) or not url.startswith("http"):
+                continue
+            clean = url.split("?", 1)[0]
+            key = re.sub(
+                r"-[OF](?:-[^./?]+)?(?=\.(?:jpe?g|png|webp)$)",
+                "",
+                clean,
+                flags=re.I,
+            )
+            if key not in positions:
+                positions[key] = len(images)
+                images.append(url)
+                continue
+            index = positions[key]
+            if full_variant.search(url) and not full_variant.search(images[index]):
+                images[index] = url
+    return images
+
 
 _SPECS_READY_JS = """() => {
     return [...document.querySelectorAll('table th')]
@@ -740,15 +852,16 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
             except Exception:
                 pass
 
-        # Extract gallery images without forcing full scroll/click
+        # Open the photo-count control to expose thumbnails that are absent from
+        # the initial PDP, then read the hydrated gallery and full-size URLs.
         try:
+            await _expand_gallery(page)
             imgs = await page.evaluate(_GALLERY_IMAGES_JS)
             if imgs:
-                existing = result.get("images", [])
-                for img in imgs:
-                    if img not in existing:
-                        existing.append(img)
-                result["images"] = existing
+                existing = result.get("images") or []
+                merged = _merge_gallery_images(existing, imgs)
+                limit = settings.max_gallery_images
+                result["images"] = merged[:limit] if limit else merged
         except Exception:
             pass
 

@@ -24,7 +24,12 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from scrapers.mercadolibre import _GALLERY_IMAGES_JS, _redirected_away
+from scrapers.mercadolibre import (
+    _expand_gallery,
+    _GALLERY_IMAGES_JS,
+    _merge_gallery_images,
+    _redirected_away,
+)
 
 try:
     from playwright.async_api import async_playwright
@@ -56,6 +61,22 @@ LEGACY_LAYOUT = """
   <img class="gallery-image__image" src="https://http2.mlstatic.com/CCC-F-null.webp">
   <img class="gallery-image__image" src="https://http2.mlstatic.com/AAA-F.webp">
 </div>
+"""
+
+PHOTO_COUNT_BUTTON = """
+<button id="show-photos">8 Fotos</button>
+<script>
+document.querySelector('#show-photos').addEventListener('click', () => {
+  const gallery = document.createElement('div');
+  gallery.className = 'ui-pdp-gallery-modal';
+  gallery.setAttribute('role', 'dialog');
+  gallery.innerHTML = Array.from({length: 8}, (_, i) =>
+    `<img src="https://http2.mlstatic.com/PHOTO-${i}-O.webp"
+          data-zoom="https://http2.mlstatic.com/PHOTO-${i}-F.webp">`
+  ).join('');
+  document.body.append(gallery);
+});
+</script>
 """
 
 
@@ -100,15 +121,56 @@ class TestGalleryExtraction(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("https://http2.mlstatic.com/AAA-O.webp", imgs)
         self.assertNotIn("https://http2.mlstatic.com/recommendation.webp", imgs)
 
-    async def test_capped_at_40(self):
+    async def test_extraction_safety_cap(self):
         cards = "\n".join(
             f'<img class="ui-pdp-gallery__figure__image" src="https://http2.mlstatic.com/{i}-O.webp">'
-            for i in range(50)
+            for i in range(90)
         )
-        self.assertEqual(len(await self._extract(f"<div>{cards}</div>")), 40)
+        self.assertEqual(len(await self._extract(f"<div>{cards}</div>")), 80)
 
     async def test_empty_page(self):
         self.assertEqual(await self._extract("<div>sin imagenes</div>"), [])
+
+    async def test_photo_count_button_opens_complete_gallery(self):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            try:
+                await page.set_content(PHOTO_COUNT_BUTTON)
+                await _expand_gallery(page)
+                imgs = await page.evaluate(_GALLERY_IMAGES_JS)
+                self.assertEqual(len(imgs), 8)
+                self.assertEqual(imgs[0], "https://http2.mlstatic.com/PHOTO-0-F.webp")
+                self.assertTrue(all(url.endswith("-F.webp") for url in imgs))
+            finally:
+                await browser.close()
+
+    async def test_full_size_variant_replaces_preview(self):
+        html = """
+        <div class="ui-pdp-gallery">
+          <img class="ui-pdp-gallery__figure__image" src="https://http2.mlstatic.com/PHOTO-O.webp">
+          <img class="gallery-image__image" src="https://http2.mlstatic.com/PHOTO-F.webp">
+        </div>
+        """
+        self.assertEqual(
+            await self._extract(html),
+            ["https://http2.mlstatic.com/PHOTO-F.webp"],
+        )
+
+    def test_merge_prefers_full_variant_across_sources(self):
+        self.assertEqual(
+            _merge_gallery_images(
+                ["https://http2.mlstatic.com/PHOTO-O.webp?width=200"],
+                [
+                    "https://http2.mlstatic.com/PHOTO-F.webp",
+                    "https://http2.mlstatic.com/OTHER-F-null.jpg",
+                ],
+            ),
+            [
+                "https://http2.mlstatic.com/PHOTO-F.webp",
+                "https://http2.mlstatic.com/OTHER-F-null.jpg",
+            ],
+        )
 
 
 class TestRedirectGuard(unittest.TestCase):

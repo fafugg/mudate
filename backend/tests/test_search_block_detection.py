@@ -28,6 +28,16 @@ class _Resp:
         self.status = status
 
 
+class _FakeDetailPage:
+    async def close(self):
+        pass
+
+
+class _FakeContext:
+    async def new_page(self):
+        return _FakeDetailPage()
+
+
 class _FakePage:
     """Minimal page double for the search phase.
 
@@ -41,7 +51,7 @@ class _FakePage:
         self._marker = marker
         self._ng_state = ng_state
         self.goto_count = 0
-        self.context = None  # only read, never used when all listings are known
+        self.context = _FakeContext()  # detail fetches use a separate page
 
     async def goto(self, url, **kwargs):
         idx = min(self.goto_count, len(self._statuses) - 1)
@@ -129,7 +139,8 @@ class TestArgenpropBlocked(unittest.TestCase):
         with patch.object(ArgenpropScraper, "launch_browser", _launch_yielding(_FakePage([200, 403]))), \
              patch("scrapers.argenprop._extract_cards_js", return_value=cards), \
              patch("scrapers.argenprop._extract_total_pages", return_value=2), \
-             patch("scrapers.argenprop._extract_total_items", return_value=10):
+             patch("scrapers.argenprop._extract_total_items", return_value=10), \
+             patch("scrapers.argenprop._scrape_detail", new=AsyncMock(return_value={})):
             results = asyncio.run(
                 self.scraper.scrape_search("/casas-venta/", existing_ids={"ap-1"})
             )

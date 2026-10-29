@@ -155,6 +155,8 @@ def _merge(house: dict, listing: dict, now: str) -> None:
     # sync_mutable_fields() below overwrites ``published_at`` with the new one.
     advance_first_published(house, listing.get("published_at"))
     sync_mutable_fields(house, listing)
+    if listing.get("_entity_id"):
+        house["remax_entity_id"] = str(listing["_entity_id"])
     house["last_updated"] = now
 
 
@@ -202,6 +204,8 @@ def _new_house(hid: str, listing: dict, session_id: str, engine: str, now: str) 
         "lng": listing.get("lng"),
         "geocode_failed": False,
     }
+    if engine == "remax" and listing.get("_entity_id"):
+        house["remax_entity_id"] = str(listing["_entity_id"])
     # Sets first_published_at (portal date, else now) and republish_count = 0.
     backfill_publish_fields(house)
     return house

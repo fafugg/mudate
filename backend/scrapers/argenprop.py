@@ -2,7 +2,9 @@ import asyncio
 import logging
 import re
 from typing import Any, Callable, Dict, List, Optional, Set
+from urllib.parse import parse_qs, urlsplit
 
+from config import settings
 from .base import (
     BLOCK_STATUSES,
     BaseScraper,
@@ -16,6 +18,52 @@ from .base import (
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.argenprop.com"
+
+
+def _merge_image_urls(*sources: Any) -> List[str]:
+    """Merge gallery sources, deduplicating URL variants and preferring larger ones."""
+    images: List[str] = []
+    positions: Dict[str, int] = {}
+    for source in sources:
+        if isinstance(source, str):
+            source = [source]
+        if not isinstance(source, list):
+            continue
+        for image in source:
+            if not isinstance(image, str) or not image.startswith("http"):
+                continue
+            parsed = urlsplit(image)
+            path = "/".join(
+                part for part in parsed.path.split("/")
+                if part and not re.fullmatch(r"\d+x\d+", part)
+            )
+            key = f"{parsed.netloc.lower()}/{path}"
+            if key not in positions:
+                positions[key] = len(images)
+                images.append(image)
+            elif _image_resolution_score(image) > _image_resolution_score(images[positions[key]]):
+                images[positions[key]] = image
+    return images[:settings.max_gallery_images]
+
+
+def _image_resolution_score(image: str) -> int:
+    lowered = image.lower()
+    if any(token in lowered for token in ("original", "fullsize", "full-size", "large")):
+        return 10**12
+    parsed = urlsplit(image)
+    for part in parsed.path.split("/"):
+        match = re.fullmatch(r"(\d+)x(\d+)", part)
+        if match:
+            return int(match.group(1)) * int(match.group(2))
+    query = parse_qs(parsed.query)
+    for width_key, height_key in (("width", "height"), ("w", "h")):
+        try:
+            width = int(query.get(width_key, query.get(height_key, ["0"]))[0])
+            height = int(query.get(height_key, query.get(width_key, ["0"]))[0])
+            return width * height
+        except (KeyError, ValueError, IndexError):
+            continue
+    return 0
 
 
 class ArgenpropScraper(BaseScraper):
@@ -355,12 +403,12 @@ async def _scrape_detail(page, url: str) -> Dict[str, Any]:
         for k, v in dom_result.items():
             if v is not None:
                 if k == "images" and k in result and isinstance(v, list) and isinstance(result[k], list):
-                    for img in v:
-                        if img not in result[k]:
-                            result[k].append(img)
+                    result[k] = _merge_image_urls(v, result[k])
                 else:
                     result[k] = v
 
+        if isinstance(result.get("images"), list):
+            result["images"] = _merge_image_urls(result["images"])
         return result
     except Exception as e:
         logger.error("AP detail error %s: %s: %s", url[-80:], type(e).__name__, e)
@@ -374,9 +422,9 @@ def _parse_ld_data(data: dict) -> Dict[str, Any]:
     # Images
     img = data.get("image")
     if isinstance(img, str) and img.startswith("http"):
-        result["images"] = [img]
+        result["images"] = _merge_image_urls([img])
     elif isinstance(img, list):
-        result["images"] = [i for i in img if isinstance(i, str) and i.startswith("http")][:40]
+        result["images"] = _merge_image_urls(img)
 
     # Address
     addr = data.get("address")
@@ -417,7 +465,12 @@ async def _extract_detail_from_dom(page) -> Dict[str, Any]:
         # Try to open gallery/lightbox if present to load all images
         try:
             # Look for buttons like "Ver todas", "Galería", etc.
-            btn = await page.query_selector('button:has-text("Ver todas"), button:has-text("galería"), [data-testid*="gallery"], .gallery-button, a:has-text("Ver fotos")')
+            btn = await page.query_selector(
+                'button:has-text("Ver todas"), button:has-text("Fotos"), '
+                'button:has-text("galería"), [data-testid*="gallery"], '
+                '.gallery-button, a:has-text("Ver fotos"), a:has-text("Fotos"), '
+                '[aria-label*="foto" i]'
+            )
             if btn:
                 await btn.click()
                 await asyncio.sleep(2)
@@ -428,9 +481,18 @@ async def _extract_detail_from_dom(page) -> Dict[str, Any]:
         try:
             await page.evaluate("""async () => {
                 const delay = ms => new Promise(res => setTimeout(res, ms));
-                for (let i = 0; i < 10; i++) {
+                for (let i = 0; i < 12; i++) {
                     window.scrollBy(0, window.innerHeight);
-                    await delay(200);
+                    await delay(180);
+                }
+                const roots = [...document.querySelectorAll(
+                    '[role="dialog"], [class*="gallery"], [class*="lightbox"], .swiper'
+                )].filter(el => el.scrollHeight > el.clientHeight + 40);
+                for (const root of roots) {
+                    for (let i = 0; i < 12; i++) {
+                        root.scrollTop = Math.min(root.scrollTop + root.clientHeight, root.scrollHeight);
+                        await delay(120);
+                    }
                 }
                 window.scrollTo(0, 0);
             }""")
@@ -442,6 +504,7 @@ async def _extract_detail_from_dom(page) -> Dict[str, Any]:
         data = await page.evaluate(r"""() => {
             const r = {};
             const imgs = [];
+            const processedImgs = new WeakSet();
 
             function addImg(u) {
                 if (!u || typeof u !== 'string') return;
@@ -453,6 +516,29 @@ async def _extract_detail_from_dom(page) -> Dict[str, Any]:
                 if (!imgs.includes(u)) imgs.push(u);
             }
 
+            function addImageElement(image) {
+                if (processedImgs.has(image)) return;
+                processedImgs.add(image);
+                const zoom = image.getAttribute('data-zoom') ||
+                             image.getAttribute('data-original') || '';
+                if (zoom) {
+                    addImg(zoom);
+                    return;
+                }
+                const srcset = image.getAttribute('data-srcset') ||
+                               image.getAttribute('srcset') || '';
+                const candidates = srcset.split(',').map(entry => {
+                    const parts = entry.trim().split(/\s+/);
+                    return parts[0] || '';
+                }).filter(Boolean);
+                if (candidates.length) {
+                    addImg(candidates[candidates.length - 1]);
+                    return;
+                }
+                addImg(image.getAttribute('data-src') ||
+                       image.getAttribute('data-lazy-src') || image.src || '');
+            }
+
             // Try multiple gallery selectors
             // data-open-gallery divs with background-image
             document.querySelectorAll('[data-open-gallery] div[style]').forEach(div => {
@@ -462,12 +548,7 @@ async def _extract_detail_from_dom(page) -> Dict[str, Any]:
             });
             // Gallery containers
             document.querySelectorAll('.gallery img, .galeria img, [class*="gallery"] img, [class*="fotos"] img, #gallery img').forEach(i => {
-                addImg(i.src || i.getAttribute('data-src') || i.getAttribute('data-zoom') || '');
-                const srcset = i.getAttribute('srcset') || i.getAttribute('data-srcset') || '';
-                srcset.split(',').forEach(entry => {
-                    const parts = entry.trim().split(/\s+/);
-                    if (parts[0]) addImg(parts[0]);
-                });
+                addImageElement(i);
             });
             // Background images in gallery elements
             document.querySelectorAll('[class*="gallery"] [style*="background"], [class*="slider"] [style*="background"], .swiper-slide [style*="background"]').forEach(el => {
@@ -477,9 +558,7 @@ async def _extract_detail_from_dom(page) -> Dict[str, Any]:
             });
             // All imgs with static-content
             document.querySelectorAll('img').forEach(i => {
-                addImg(i.src || '');
-                addImg(i.getAttribute('data-src') || '');
-                addImg(i.getAttribute('data-zoom') || '');
+                addImageElement(i);
             });
 
             r.images = imgs.slice(0, 80);
