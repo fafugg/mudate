@@ -43,7 +43,7 @@ function app() {
     runStatus: null,
     runDismissed: false,
     _pollInterval: null,
-    filterReview: ['', 'en_duda', 'interesante', 'contactar', 'descartada'],
+    filterReview: ['', 'en_duda', 'interesante', 'contactar'],
     filterStatus: ['active'],
     filterType: [],
     filterMinPrice: '',
@@ -87,6 +87,8 @@ function app() {
     darkMode: false,
     actionsOpen: false,
     sessionsActionsOpen: false,
+    bulkUpdate: { running: false, completed: 0, total: 0, currentLabel: '' },
+    _bulkUpdateToken: 0,
     showManualAddressModal: false,
     _savingAddressId: null,
     _savedAddressId: null,
@@ -484,6 +486,7 @@ function app() {
     async setView(view) {
       const toMap = view === 'map';
       const toCard = view === 'card';
+      if (view === 'table' || toCard) localStorage.setItem('houseListView', toCard ? 'card' : 'table');
       if (toMap && this.mapView && this._map) {
         // viewInMap() can call setView('map') again to focus another house.
         this._resizeMap();
@@ -520,6 +523,8 @@ function app() {
     },
 
     logout() {
+      this._bulkUpdateToken++;
+      this.bulkUpdate = { running: false, completed: 0, total: 0, currentLabel: '' };
       this.stopPolling();
       this.stopGeocoding();
       this.username = '';
@@ -545,7 +550,7 @@ function app() {
       this.loading = true; this.loadingMsg = 'Cargando...';
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       this.stopGeocoding();
-      this.filterReview = ['', 'en_duda', 'interesante', 'contactar', 'descartada'];
+      this.filterReview = ['', 'en_duda', 'interesante', 'contactar'];
       this.filterType = [];
       this.filterStatus = ['active'];
       this.filterMinPrice = '';
@@ -612,7 +617,7 @@ function app() {
           this.startPolling();
         }
         this.tablePage = 1;
-        this.filterReview = ['', 'en_duda', 'interesante', 'contactar', 'descartada'];
+        this.filterReview = ['', 'en_duda', 'interesante', 'contactar'];
         this.filterType = [];
         this.filterStatus = ['active'];
         this.filterMinPrice = '';
@@ -621,7 +626,7 @@ function app() {
         this.filterRealEstate = '';
         this.filtersOpen = false;
         this.mapView = false;
-        this.cardView = false;
+        this.cardView = localStorage.getItem('houseListView') === 'card';
         this.destroyMap();
         this._savedCenter = null;
         this._savedZoom = null;
@@ -662,6 +667,96 @@ function app() {
         this.sessions = this.sessions.filter(s => s.id !== sessionId);
       } catch (e) { this.showToast('Error al eliminar la búsqueda.', 'error'); }
       finally { this.loading = false; }
+    },
+
+    async updateAllSearches() {
+      if (this.bulkUpdate.running || !this.sessions.length) return;
+
+      const username = this.username;
+      const token = ++this._bulkUpdateToken;
+      const targets = [...this.sessions];
+      let updated = 0;
+      let skipped = 0;
+      let failed = 0;
+      let stopped = false;
+
+      this.sessionsActionsOpen = false;
+      this.bulkUpdate = {
+        running: true,
+        completed: 0,
+        total: targets.length,
+        currentLabel: '',
+      };
+
+      try {
+        for (const session of targets) {
+          if (token !== this._bulkUpdateToken || username !== this.username) break;
+          this.bulkUpdate.currentLabel = session.label || 'Sin nombre';
+
+          let runId;
+          try {
+            const started = await api(
+              'POST',
+              `/users/${username}/sessions/${session.id}/run`
+            );
+            if (started.already_running) {
+              skipped++;
+              this.bulkUpdate.completed++;
+              continue;
+            }
+            runId = started.run_id;
+          } catch (e) {
+            failed++;
+            this.bulkUpdate.completed++;
+            stopped = true;
+            break;
+          }
+
+          let runStatus;
+          try {
+            do {
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              if (token !== this._bulkUpdateToken || username !== this.username) {
+                stopped = true;
+                break;
+              }
+              runStatus = await api('GET', `/runs/${runId}`);
+            } while (runStatus.status === 'running');
+          } catch (e) {
+            stopped = true;
+            failed++;
+          }
+          if (stopped) break;
+
+          if (runStatus?.status === 'done' || runStatus?.status === 'partial') updated++;
+          else failed++;
+          this.bulkUpdate.completed++;
+        }
+
+        if (token !== this._bulkUpdateToken || username !== this.username) return;
+
+        const data = await api('GET', `/users/${username}`);
+        this.sessions = data.sessions || [];
+
+        if (stopped) {
+          this.showToast(
+            `Actualización detenida. ${updated} completadas, ${skipped} ya estaban en curso y ${failed} con error.`,
+            'error'
+          );
+        } else {
+          this.showToast(
+            `Actualización completa: ${updated} búsquedas, ${skipped} omitidas por estar en curso${failed ? `, ${failed} con error` : ''}.`,
+            failed ? 'error' : 'success'
+          );
+        }
+      } catch (e) {
+        this.showToast('No se pudo actualizar la lista de búsquedas.', 'error');
+      } finally {
+        if (token === this._bulkUpdateToken) {
+          this.bulkUpdate.running = false;
+          this.bulkUpdate.currentLabel = '';
+        }
+      }
     },
 
     // ── Run ──────────────────────────────────────────────────────────────────

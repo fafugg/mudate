@@ -128,13 +128,15 @@
               @blur="saveLabel()" @keydown.enter="$event.target.blur()" @keydown.escape="editingLabel = false"
               class="text-sm font-semibold text-slate-700 bg-white border border-blue-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-0 max-w-[200px]" />
             <template x-for="(src, srcIdx) in (currentSession?.search_sources || [])" :key="src.engine + ':' + srcIdx">
-              <span @click="openSourceEditor()"
-                class="shrink-0 px-1.5 py-0.5 rounded-full font-medium leading-none text-[10px] cursor-pointer hover:ring-2 hover:ring-blue-300 transition"
+              <button type="button" @click.stop="openSourceEditor()"
+                :aria-label="'Editar fuentes: ' + (ENGINE_LABELS[src.engine] || src.engine)"
+                class="shrink-0 px-1.5 py-0.5 rounded-full font-medium leading-none text-[10px] cursor-pointer hover:ring-2 hover:ring-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-300 transition"
                 :class="{'bg-purple-100 text-purple-700': src.engine === 'zonaprop', 'bg-orange-100 text-orange-700': src.engine === 'argenprop', 'bg-yellow-100 text-yellow-700': src.engine === 'mercadolibre', 'bg-blue-100 text-blue-700': src.engine === 'remax'}"
-                x-text="ENGINE_LABELS[src.engine] || src.engine"></span>
+                x-text="ENGINE_LABELS[src.engine] || src.engine"></button>
             </template>
-            <button @click="openSourceEditor()"
-              class="shrink-0 px-1.5 py-0.5 rounded-full font-medium leading-none text-[10px] border border-dashed border-slate-300 text-slate-400 hover:text-blue-600 hover:border-blue-400 transition cursor-pointer"
+            <button type="button" @click.stop="openSourceEditor()"
+              aria-label="Agregar o editar URLs de búsqueda"
+              class="shrink-0 px-1.5 py-0.5 rounded-full font-medium leading-none text-[10px] border border-dashed border-slate-300 text-slate-400 hover:text-blue-600 hover:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-300 transition cursor-pointer"
               title="Editar fuentes">+</button>
           </div>
         </template>
@@ -173,6 +175,15 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 7.5m0 0L7.5 12m4.5-4.5V21" />
               </svg>
               Importar DB
+            </button>
+            <div class="my-1 border-t border-slate-100"></div>
+            <button @click="updateAllSearches()"
+              :disabled="bulkUpdate.running || sessions.length === 0"
+              class="w-full text-left text-xs px-4 py-2.5 hover:bg-slate-50 text-slate-700 disabled:text-slate-400 disabled:cursor-not-allowed flex items-center gap-2.5">
+              <svg class="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M20 7v5h-5M4 17v-5h5m-4.5-5a8 8 0 0113.2-2L20 7M4 17l2.3 2A8 8 0 0019.5 12" />
+              </svg>
+              Actualizar todas las búsquedas
             </button>
           </div>
         </div>
@@ -259,6 +270,22 @@
   <!-- ── SESSIONS LIST ── -->
   <div x-show="screen === 'sessions'" class="max-w-2xl mx-auto px-3 sm:px-4 py-6 sm:py-8"
     @keydown.escape.window="if (modalType !== null) closeModal()">
+
+    <div x-show="bulkUpdate.running" x-cloak
+      class="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+      <div class="flex items-center gap-2 text-xs text-blue-800">
+        <svg class="animate-spin h-4 w-4 shrink-0 text-blue-600" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+        </svg>
+        <span class="font-medium">Actualizando búsqueda <span x-text="bulkUpdate.completed + 1"></span> de <span x-text="bulkUpdate.total"></span></span>
+        <span class="text-blue-600 truncate" x-text="bulkUpdate.currentLabel"></span>
+      </div>
+      <div class="mt-2 h-1.5 rounded-full bg-blue-100">
+        <div class="h-1.5 rounded-full bg-blue-500 transition-all"
+          :style="`width: ${bulkUpdate.total ? Math.round((bulkUpdate.completed / bulkUpdate.total) * 100) : 0}%`"></div>
+      </div>
+    </div>
 
     <!-- New session button -->
     <button @click="openNewSearchModal()"
@@ -1622,6 +1649,7 @@
   </template>
 
   <!-- ── MODAL (new search / source editor) ── -->
+  <template x-teleport="body">
   <div x-show="modalType !== null" x-cloak x-effect="document.body.style.overflow = modalType !== null ? 'hidden' : ''"
     @click.self="closeModal()"
     @keydown.escape.window="closeModal()"
@@ -1732,6 +1760,7 @@
       </div>
     </div>
   </div>
+  </template>
 
   <!-- MANUAL ADDRESS MODAL — the inner panel is x-if'd so the ~2.338-row
        table only exists in the DOM while the modal is open (x-show alone kept
