@@ -734,10 +734,12 @@
       <button @click="clearSelection()" class="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 ml-auto">Limpiar</button>
     </div>
 
-    <!-- Table renderings are unmounted outside Table mode. -->
-    <template x-if="!mapView && !cardView && !isMobile">
-    <div class="hidden md:block bg-white rounded-xl border border-slate-200 table-wrap shadow-sm">
-      <table class="min-w-full text-xs">
+    <!-- The column header is shared by both list renderings: Table view mounts
+         it above its body, Card view mounts the same header above the cards so
+         clicking a heading sorts them. Unmounted on Map view. -->
+    <template x-if="!mapView && (!isMobile || cardView)">
+    <div class="bg-white rounded-xl border border-slate-200 table-wrap shadow-sm" :class="cardView ? 'mb-3' : ''">
+      <table class="min-w-full text-xs" :class="cardView ? 'whitespace-nowrap' : ''">
         <thead class="bg-slate-50 border-b border-slate-200">
           <tr>
             <th class="px-2 py-2 text-center w-8">
@@ -745,26 +747,27 @@
                 class="rounded border-slate-300 text-blue-600 focus:ring-blue-400" />
             </th>
             <th class="px-3 py-2 text-right font-semibold text-slate-400">#</th>
-            <th x-show="visibleColumns.status" class="px-3 py-2 text-center font-semibold text-slate-500" @click="setSort('status')" title="Estado"><span x-text="sortIndicator('status')"></span></th>
-            <th x-show="visibleColumns.review" class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('review')">Revisión <span x-text="sortIndicator('review')"></span></th>
+            <th x-show="visibleColumns.status" class="px-3 py-2 text-center font-semibold text-slate-500 cursor-pointer select-none hover:bg-slate-100" @click="setSort('status')" title="Estado"><span x-text="sortIndicator('status')"></span></th>
+            <th x-show="visibleColumns.review" class="px-3 py-2 text-left font-semibold text-slate-500 cursor-pointer select-none hover:bg-slate-100" @click="setSort('review')">Revisión <span x-text="sortIndicator('review')"></span></th>
             <th x-show="visibleColumns.info" class="px-3 py-2 text-center font-semibold text-slate-500">Info</th>
             <th x-show="visibleColumns.link" class="px-3 py-2 text-center font-semibold text-slate-500">Ver</th>
-            <th x-show="visibleColumns.id" class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('search_engine_id')">ID <span x-text="sortIndicator('search_engine_id')"></span></th>
-            <th x-show="visibleColumns.provider" class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('search_engine')">Provider <span x-text="sortIndicator('search_engine')"></span></th>
-            <th x-show="visibleColumns.type" class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('type')">Tipo <span x-text="sortIndicator('type')"></span></th>
-            <th x-show="visibleColumns.address" class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('address')">Dirección <span x-text="sortIndicator('address')"></span></th>
-            <th x-show="visibleColumns.price" class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('price')">Precio <span x-text="sortIndicator('price')"></span></th>
-            <th x-show="visibleColumns.m2" class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('price_per_m2')">$/m² <span x-text="sortIndicator('price_per_m2')"></span></th>
-            <th class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('covered_m2')">m² Cub <span x-text="sortIndicator('covered_m2')"></span></th>
-            <th class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('total_m2')">m² Tot <span x-text="sortIndicator('total_m2')"></span></th>
-            <th x-show="visibleColumns.amb" class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('ambientes')">Amb <span x-text="sortIndicator('ambientes')"></span></th>
-            <th x-show="visibleColumns.dorm" class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('dormitorios')">Dorm <span x-text="sortIndicator('dormitorios')"></span></th>
-            <th x-show="visibleColumns.expenses" class="px-3 py-2 text-right font-semibold text-slate-500" @click="setSort('expenses')">Expensas <span x-text="sortIndicator('expenses')"></span></th>
+            <th x-show="visibleColumns.id" class="px-3 py-2 text-left font-semibold text-slate-500 cursor-pointer select-none hover:bg-slate-100" @click="setSort('search_engine_id')">ID <span x-text="sortIndicator('search_engine_id')"></span></th>
+            <th x-show="visibleColumns.provider" class="px-3 py-2 text-left font-semibold text-slate-500 cursor-pointer select-none hover:bg-slate-100" @click="setSort('search_engine')">Provider <span x-text="sortIndicator('search_engine')"></span></th>
+            <th x-show="visibleColumns.type" class="px-3 py-2 text-left font-semibold text-slate-500 cursor-pointer select-none hover:bg-slate-100" @click="setSort('type')">Tipo <span x-text="sortIndicator('type')"></span></th>
+            <th x-show="visibleColumns.address" class="px-3 py-2 text-left font-semibold text-slate-500 cursor-pointer select-none hover:bg-slate-100" @click="setSort('address')">Dirección <span x-text="sortIndicator('address')"></span></th>
+            <th x-show="visibleColumns.price" class="px-3 py-2 text-right font-semibold text-slate-500 cursor-pointer select-none hover:bg-slate-100" @click="setSort('price')">Precio <span x-text="sortIndicator('price')"></span></th>
+            <th x-show="visibleColumns.m2" class="px-3 py-2 text-right font-semibold text-slate-500 cursor-pointer select-none hover:bg-slate-100" @click="setSort('price_per_m2')">$/m² <span x-text="sortIndicator('price_per_m2')"></span></th>
+            <th class="px-3 py-2 text-right font-semibold text-slate-500 cursor-pointer select-none hover:bg-slate-100" @click="setSort('covered_m2')">m² Cub <span x-text="sortIndicator('covered_m2')"></span></th>
+            <th class="px-3 py-2 text-right font-semibold text-slate-500 cursor-pointer select-none hover:bg-slate-100" @click="setSort('total_m2')">m² Tot <span x-text="sortIndicator('total_m2')"></span></th>
+            <th x-show="visibleColumns.amb" class="px-3 py-2 text-right font-semibold text-slate-500 cursor-pointer select-none hover:bg-slate-100" @click="setSort('ambientes')">Amb <span x-text="sortIndicator('ambientes')"></span></th>
+            <th x-show="visibleColumns.dorm" class="px-3 py-2 text-right font-semibold text-slate-500 cursor-pointer select-none hover:bg-slate-100" @click="setSort('dormitorios')">Dorm <span x-text="sortIndicator('dormitorios')"></span></th>
+            <th x-show="visibleColumns.expenses" class="px-3 py-2 text-right font-semibold text-slate-500 cursor-pointer select-none hover:bg-slate-100" @click="setSort('expenses')">Expensas <span x-text="sortIndicator('expenses')"></span></th>
             <th x-show="visibleColumns.realEstate" class="px-3 py-2 text-left font-semibold text-slate-500">Inmobiliaria</th>
-            <th x-show="visibleColumns.age" class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('first_published_at')" title="Fecha de publicación original (estable ante re-publicaciones)">Antigüedad <span x-text="sortIndicator('first_published_at')"></span></th>
-            <th x-show="visibleColumns.updated" class="px-3 py-2 text-left font-semibold text-slate-500" @click="setSort('last_updated')">Actualizado <span x-text="sortIndicator('last_updated')"></span></th>
+            <th x-show="visibleColumns.age" class="px-3 py-2 text-left font-semibold text-slate-500 cursor-pointer select-none hover:bg-slate-100" @click="setSort('first_published_at')" title="Fecha de publicación original (estable ante re-publicaciones)">Antigüedad <span x-text="sortIndicator('first_published_at')"></span></th>
+            <th x-show="visibleColumns.updated" class="px-3 py-2 text-left font-semibold text-slate-500 cursor-pointer select-none hover:bg-slate-100" @click="setSort('last_updated')">Actualizado <span x-text="sortIndicator('last_updated')"></span></th>
           </tr>
         </thead>
+        <template x-if="!cardView">
         <tbody>
           <template x-for="(h, i) in pagedHouses" :key="h.internal_id">
             <tr class="border-b border-slate-100 hover:bg-slate-50 transition" :class="h.status === 'removed' ? 'opacity-50' : ''">
@@ -851,6 +854,7 @@
             </td>
           </tr>
         </tbody>
+        </template>
       </table>
     </div>
     </template>
@@ -921,15 +925,10 @@
     </div>
     </template>
 
-    <!-- Full listing cards are available on desktop and mobile. -->
+    <!-- Full listing cards are available on desktop and mobile. The shared
+         column header above sorts them; only the Table body is unmounted. -->
     <template x-if="cardView">
     <div class="space-y-3">
-      <label x-show="pagedHouses.length" class="flex items-center gap-2 px-1 text-xs text-slate-500 cursor-pointer">
-        <input type="checkbox" @change="toggleSelectAll($event)"
-          :checked="selectedHouses.length === pagedHouses.length && pagedHouses.length > 0"
-          class="rounded border-slate-300 text-blue-600 focus:ring-blue-400" />
-        Seleccionar esta página
-      </label>
       <template x-for="(h, i) in pagedHouses" :key="h.internal_id">
         <article class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden"
           :class="h.status === 'removed' ? 'opacity-50' : ''">
