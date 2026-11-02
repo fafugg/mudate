@@ -35,6 +35,24 @@ _PROFILE_DIR = os.path.expanduser(
     "~/.mudate_browser_headless" if _HEADLESS else "~/.mudate_browser"
 )
 
+# The headed window is hidden — parked off-screen when it opens and minimized
+# right after — so a local run never appears or steals focus. On a desktop
+# (KDE, X11/Wayland) that is what makes an 08:00 auto-refresh invisible.
+# PLAYWRIGHT_START_VISIBLE=1 keeps the window on screen, which is worth having
+# when watching a Cloudflare challenge solve by hand.
+_START_VISIBLE = os.environ.get("PLAYWRIGHT_START_VISIBLE", "").lower() in (
+    "1", "true", "yes",
+)
+
+# Minimized windows count as occluded, and Chromium throttles their timers and
+# rendering. These keep a hidden page running exactly like a visible one, so
+# the Cloudflare challenge and the detail-page loads are not slowed down.
+_UNTHROTTLED_ARGS = [
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+]
+
 # ── Block detection (Cloudflare challenge / HTTP 403) ─────────────────────────
 
 # Statuses Cloudflare or the origin return when they refuse the request.
@@ -236,12 +254,55 @@ _ORI_ABBR = {
 _ORI_WORDS = {"norte", "sur", "este", "oeste", "noreste", "noroeste", "sureste", "suroeste"}
 
 
+def _browser_args() -> List[str]:
+    """Platform/window args for the Chromium launch.
+
+    Headless runs need the container flags; headed runs must stay out of sight
+    unless PLAYWRIGHT_START_VISIBLE is set (see the module constants).
+    """
+    if _HEADLESS:
+        return ["--no-sandbox", "--disable-dev-shm-usage", "--log-level=3"]
+    if _START_VISIBLE:
+        return []
+    return [
+        "--start-minimized",
+        # Off-screen from the very first frame: the ~200 ms before the CDP
+        # minimize lands (see _minimize_window) must not flash a window either.
+        "--window-position=-32000,-32000",
+        *_UNTHROTTLED_ARGS,
+    ]
+
+
+async def _minimize_window(page) -> None:
+    """Ask the window manager to minimize the browser window.
+
+    `--start-minimized` is ignored once Playwright creates the window itself
+    (and it does nothing at all on Wayland), so the state is set explicitly
+    through CDP. Best effort: a compositor that refuses the request must never
+    break a scrape, and the off-screen `--window-position` keeps the window out
+    of sight even when this call fails.
+    """
+    try:
+        session = await page.context.new_cdp_session(page)
+        try:
+            win = await session.send("Browser.getWindowForTarget")
+            await session.send(
+                "Browser.setWindowBounds",
+                {"windowId": win["windowId"], "bounds": {"windowState": "minimized"}},
+            )
+        finally:
+            await session.detach()
+    except Exception as exc:  # noqa: BLE001 — minimization is cosmetic
+        logger.debug("Could not minimize browser window: %s", exc)
+
+
 class ZonapropScraper(BaseScraper):
     BASE_URL = BASE_URL
 
     @asynccontextmanager
     async def launch_browser(self, headless: bool = True):
         os.makedirs(_PROFILE_DIR, exist_ok=True)
+        hidden = not _HEADLESS and not _START_VISIBLE
         async with async_playwright() as p:
             context = await p.chromium.launch_persistent_context(
                 user_data_dir=_PROFILE_DIR,
@@ -252,13 +313,7 @@ class ZonapropScraper(BaseScraper):
                 locale="es-AR",
                 args=[
                     "--disable-blink-features=AutomationControlled",
-                    *([
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--log-level=3",
-                    ] if _HEADLESS else [
-                        "--start-minimized",
-                    ]),
+                    *_browser_args(),
                 ],
             )
             page = await context.new_page()
@@ -270,6 +325,8 @@ class ZonapropScraper(BaseScraper):
                         route.abort() if req.resource_type in _BLOCK else route.continue_()
                     ),
                 )
+            elif hidden:
+                await _minimize_window(page)
             try:
                 yield page
             finally:

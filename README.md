@@ -185,6 +185,7 @@ All settings are passed as environment variables.
 | `OPENCAGE_API_KEY` | *(empty)* | Optional — improves geocoding accuracy. Free tier: 2 500 req/day. Get one at [opencagedata.com](https://opencagedata.com/api#free-trial) |
 | `PLAYWRIGHT_HEADLESS` | *(auto)* | `1` forces headless, `0` forces headed. By default Zonaprop runs **headed** unless Docker is detected (`/.dockerenv`). On a server without a display (Raspberry Pi, NAS, VPS) set `PLAYWRIGHT_HEADLESS=1` in the service environment, otherwise Chromium tries to open a window and the scrape fails |
 | `PLAYWRIGHT_EXECUTABLE_PATH` | *(empty)* | Optional path to a Chromium binary, e.g. `/usr/bin/chromium`. Empty uses Playwright's bundled build. Set it when the bundled browser is unavailable (some ARM64 boards) |
+| `PLAYWRIGHT_START_VISIBLE` | *(empty)* | `1` shows the headed Zonaprop window. By default it opens off-screen and is minimized immediately, so a local or scheduled run never appears or steals focus |
 
 **With Docker**, set variables in a `.env` file next to `docker-compose.yml`:
 
