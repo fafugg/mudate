@@ -94,7 +94,9 @@ All settings are passed as environment variables.
 | Variable | Default | Description |
 |---|---|---|
 | `DB_PATH` | `../db.json` | Path to the JSON database file |
-| `OPENCAGE_API_KEY` | *(empty)* | Optional. Improves geocoding accuracy when Nominatim fails. Free tier: 2,500 req/day. Get one at [opencagedata.com](https://opencagedata.com) |
+| `GEOAPIFY_API_KEY` | *(empty)* | Optional Geoapify fallback. Free plan: 3,000 credits/day with attribution. |
+| `OPENCAGE_API_KEY` | *(empty)* | Optional OpenCage fallback; its free trial is for testing only. |
+| `NOMINATIM_URL` | *(empty)* | Optional self-hosted or third-party Nominatim search endpoint. Public OSMF Nominatim is not used for automated jobs. |
 | `PLAYWRIGHT_HEADLESS` | *(auto)* | `1` forces headless, `0` forces headed. Zonaprop defaults to **headed** mode unless Docker is detected (`/.dockerenv`), because a real window bypasses Cloudflare more reliably. On a machine without a display — Raspberry Pi, NAS, VPS — set `PLAYWRIGHT_HEADLESS=1` in the process environment, otherwise Chromium tries to open a window and exits |
 | `PLAYWRIGHT_START_VISIBLE` | *(empty)* | `1` shows the headed Zonaprop window. By default it opens off-screen and is minimized immediately, so a local or scheduled run never appears or steals focus |
 
@@ -222,20 +224,12 @@ The scheduler re-scrapes every session for every user every morning at **08:00 A
 - **Scraping strategy:** Uses the internal Remax API for search results (no Cloudflare issues). Detail pages are scraped via Playwright for full property data.
 - **Block handling:** the Playwright search phase detects refusals the same way as Argenprop — HTTP 403/429/503 or a Cloudflare challenge marker with nothing collected yet raises `ScrapeBlockedError`; mid-pagination it keeps the already-collected cards.
 
-### Nominatim (OpenStreetMap)
+### Geocoding providers
 
-- **URL:** `https://nominatim.openstreetmap.org`
-- **Purpose:** Primary geocoding service. Resolves Argentine street addresses to latitude/longitude coordinates.
-- **Rate limit:** 1 request per second (enforced by policy). The geocoder uses a **pipelined rate limiter** — the scheduling lock is held only long enough to claim a send-time slot, then released before the HTTP call. This allows concurrent geocoding tasks to pipeline their 1.1 s waits, nearly doubling throughput compared to a naive lock-held-for-entire-call approach.
-- **Cascade:** Up to 3 progressively simplified variants of the address are tried (full address → strip street number → first two comma-parts only).
-- **No API key required.**
-
-### OpenCage
-
-- **URL:** `https://api.opencagedata.com`
-- **Purpose:** Fallback geocoding service used when all Nominatim attempts fail. OpenCage aggregates multiple sources and has better coverage for incomplete or ambiguous addresses.
-- **Rate limit:** Free tier: 2,500 requests/day, 1 request/second.
-- **Requires:** `OPENCAGE_API_KEY` environment variable. When not set, this service is skipped.
+- [Georef](https://www.argentina.gob.ar/georef) is the default, with no API key. Its results are approximate; requests are conservatively rate- and quota-limited and attribution is displayed on the map.
+- Geoapify and OpenCage are optional fallbacks enabled by their API keys. OpenCage's free trial is for testing only.
+- `NOMINATIM_URL` optionally enables a self-hosted or third-party search endpoint. Automated jobs do not use the public OSMF endpoint; its [usage policy](https://operations.osmfoundation.org/policies/nominatim/) discourages large or regular bulk geocoding.
+- A match must include a street number and compatible locality context. Ambiguous results are not silently accepted.
 
 ---
 
@@ -264,7 +258,7 @@ The scheduler re-scrapes every session for every user every morning at **08:00 A
 │                                              │
 │  ┌───────────────────────────────────────┐  │
 │  │            geocoder.py               │  │
-│  │  Nominatim (cascade) → OpenCage      │  │
+│  │  Georef → optional fallbacks         │  │
 │  └───────────────────────────────────────┘  │
 │                                              │
 │  ┌───────────────────────────────────────┐  │
@@ -310,7 +304,7 @@ mudate/
 │   ├── house_fields.py      # Single source of truth for house-field rules
 │   ├── deduplicator.py      # Cross-engine fuzzy deduplication
 │   ├── same_engine_dedup.py # Same-engine reactivation detection
-│   ├── geocoder.py          # Address → lat/lng (Nominatim cascade + OpenCage fallback)
+│   ├── geocoder.py          # Address → coordinates (Georef + optional fallbacks)
 │   ├── geocoding_tasks.py   # Concurrent batch geocoding with Semaphore
 │   ├── scheduler.py         # APScheduler: daily 08:00 ART refresh of all sessions
 │   ├── requirements.txt     # Python dependencies
@@ -387,6 +381,8 @@ The only way to write to the database. Acquires the file lock, reads the current
 Centralized configuration singleton. All environment variables and magic constants live here:
 - `db_path` — path to `db.json` (env: `DB_PATH`, default: `../db.json`)
 - `opencage_api_key` — OpenCage API key (env: `OPENCAGE_API_KEY`)
+- `geoapify_api_key` — Geoapify API key (env: `GEOAPIFY_API_KEY`)
+- `nominatim_url` — optional private Nominatim search endpoint (env: `NOMINATIM_URL`)
 - `geocode_batch_size` — max concurrent geocoding tasks (default: 10)
 - `nominatim_interval` — seconds between Nominatim sends (default: 1.1)
 - `scheduler_hour` / `scheduler_minute` — daily auto-refresh time (default: 08:00 ART)
@@ -399,17 +395,11 @@ Centralized configuration singleton. All environment variables and magic constan
 
 ### Backend — `geocoder.py`
 
-#### `geocode(address: str, force: bool = False) → Tuple[Optional[float], Optional[float]]`
-Public entry point. Resolves an Argentine address string to `(lat, lng)`. Consults the persistent address cache first (skipped when `force=True`), then tries up to three progressively simplified address variants against Nominatim, then falls back to OpenCage if configured. Returns `(None, None)` if all sources fail.
+#### `geocode(address: str, force: bool = False) → GeocodeResult`
+Consults the address cache, then Georef, optional Geoapify, OpenCage and private Nominatim. `force=True` bypasses negative cache entries, not successful ones. Results carry provider and approximate-precision metadata; temporary provider errors are distinguished from no match.
 
 #### `save_geocache() → None`
-Persists the address cache to `db.json.geocache.json` (next to the database, so it lives in the same volume) with an atomic replace. Lookups only mark the cache dirty; the file is written every few batches during a geocode run and once at the end, so a 184-house run does 19 writes instead of 184. Expired failures are dropped on the way out. Entries are `[lat, lng]` on success and `{"failed_at": iso}` on failure — failures are only honoured for 7 days (`_NEGATIVE_TTL`), because a timeout or a 429 is indistinguishable from "no match" and must not pin a house without coordinates forever.
-
-#### `_nominatim_rl(query: str) → Optional[Tuple[float, float]]`
-Rate-limited Nominatim call. Acquires a scheduling semaphore only long enough to claim the next permitted send-time slot (advancing `_nom_next_send` by 1.1 s), then releases it before making the HTTP call. This pipelining allows multiple concurrent geocoding tasks to overlap their HTTP waits without violating Nominatim's 1 req/s policy.
-
-#### `_variants(address: str) → List[str]`
-Generates up to three progressively simpler versions of an address: full cleaned address → street number stripped → first two comma-separated parts only. This improves geocoding hit rate for addresses with apartment numbers or noisy suffixes.
+Persists successful and definitive no-match results next to the database; legacy coordinate entries remain readable. Failures expire after seven days, and legacy failures are retried under the new cascade. Temporary errors are never negatively cached. `db.json.geocode-quota.json` tracks conservative request limits across restarts and workers.
 
 ---
 
@@ -558,7 +548,7 @@ Detects same-engine reactivation duplicates (agent deactivated + re-listed). Ret
 Merges same-engine reactivation duplicates: keeps the original house, transfers data from the re-listed house, and deletes the duplicate. Optionally accepts `selected_groups`.
 
 #### `_run_geocode(house_ids, run_id, runs) → None`
-Geocodes a list of house IDs concurrently (up to 10 at a time via `asyncio.Semaphore`). Results are collected and written with `atomic_update` every 10 houses (and once at the end), so a run does ~19 writes instead of one per house. Each batch also extends `runs[run_id]["updated_houses"]`, the delta the frontend merges instead of refetching the whole session. The Nominatim rate limiter inside the geocoder ensures the 1 req/s policy is respected globally across all concurrent tasks.
+Geocodes a list of house IDs concurrently (up to 10 at a time via `asyncio.Semaphore`). Results are written with `atomic_update` every 10 houses and exposed as deltas. A result is discarded if the address changed or another operation already set coordinates. Temporary errors produce a partial run and remain retryable.
 
 ---
 

@@ -10,7 +10,7 @@ Filter, review, map, and export properties — all from a single self-hosted web
 - **Multi-engine scraping** — Zonaprop, Argenprop, MercadoLibre, and Remax via Playwright (stealth mode)
 - **Tracks price history** — every price change is recorded per property
 - **Tracks original publication date** — a stable "first posted" date and re-post counter survive re-scrapes and merges; the detail panel shows how many days the listing has been up
-- **Geocodes addresses** and shows pins on an interactive map (Leaflet + Nominatim)
+- **Geocodes addresses** and shows pins on an interactive map (Leaflet + Georef)
 - **Filter & sort** by review, type, status, price, m², provider, and more
 - **Review system** — mark properties as Interesting, Contact, Discard, Unsure, or Duplicate
 - **Deduplication** — fuzzy address matching removes cross-engine duplicates; same-engine reactivation detection merges re-listed properties
@@ -168,7 +168,8 @@ troubleshooting, Docker alternative).
 #### 5. (Optional) Set environment variables
 
 ```bash
-export OPENCAGE_API_KEY=your_key_here   # improves geocoding accuracy
+export GEOAPIFY_API_KEY=your_key_here   # optional free-tier fallback
+export OPENCAGE_API_KEY=your_key_here   # optional; free trial is testing-only
 export DB_PATH=/path/to/db.json         # custom database location
 export PLAYWRIGHT_HEADLESS=1            # REQUIRED on a server with no display (Raspberry Pi, NAS, VPS)
 ```
@@ -182,7 +183,9 @@ All settings are passed as environment variables.
 | Variable | Default | Description |
 |---|---|---|
 | `DB_PATH` | `../db.json` | Path to the JSON database file |
-| `OPENCAGE_API_KEY` | *(empty)* | Optional — improves geocoding accuracy. Free tier: 2 500 req/day. Get one at [opencagedata.com](https://opencagedata.com/api#free-trial) |
+| `GEOAPIFY_API_KEY` | *(empty)* | Optional [Geoapify](https://www.geoapify.com/pricing/) fallback. Free plan: 3,000 credits/day with attribution. |
+| `OPENCAGE_API_KEY` | *(empty)* | Optional [OpenCage](https://opencagedata.com/pricing) fallback. Its free trial is for testing only; production requires a paid plan. |
+| `NOMINATIM_URL` | *(empty)* | Optional self-hosted or third-party Nominatim **search** URL. The public `nominatim.openstreetmap.org` endpoint is not used for automated geocoding. |
 | `PLAYWRIGHT_HEADLESS` | *(auto)* | `1` forces headless, `0` forces headed. By default Zonaprop runs **headed** unless Docker is detected (`/.dockerenv`). On a server without a display (Raspberry Pi, NAS, VPS) set `PLAYWRIGHT_HEADLESS=1` in the service environment, otherwise Chromium tries to open a window and the scrape fails |
 | `PLAYWRIGHT_EXECUTABLE_PATH` | *(empty)* | Optional path to a Chromium binary, e.g. `/usr/bin/chromium`. Empty uses Playwright's bundled build. Set it when the bundled browser is unavailable (some ARM64 boards) |
 | `PLAYWRIGHT_START_VISIBLE` | *(empty)* | `1` shows the headed Zonaprop window. By default it opens off-screen and is minimized immediately, so a local or scheduled run never appears or steals focus |
@@ -190,12 +193,12 @@ All settings are passed as environment variables.
 **With Docker**, set variables in a `.env` file next to `docker-compose.yml`:
 
 ```env
-OPENCAGE_API_KEY=your_key_here
+GEOAPIFY_API_KEY=your_key_here
 ```
 
 **Manually**, prefix the command:
 ```bash
-OPENCAGE_API_KEY=your_key_here uvicorn main:app --host 0.0.0.0 --port 8010
+GEOAPIFY_API_KEY=your_key_here uvicorn main:app --host 0.0.0.0 --port 8010
 ```
 
 ---
@@ -223,7 +226,7 @@ mudate/
 │   ├── house_fields.py    # Single source of truth for house-field rules
 │   ├── deduplicator.py    # Cross-engine fuzzy deduplication
 │   ├── same_engine_dedup.py # Same-engine reactivation detection
-│   ├── geocoder.py        # Address geocoding (Nominatim → OpenCage)
+│   ├── geocoder.py        # Address geocoding (Georef → optional fallbacks)
 │   ├── geocoding_tasks.py # Concurrent batch geocoding
 │   ├── scheduler.py       # Daily auto-refresh (APScheduler)
 │   ├── scrapers/
@@ -268,7 +271,8 @@ docker compose up --build   # rebuilds the image with the latest code
 
 - **Single-user friendly** — the JSON database works well for personal use or a small group. It is not designed for many concurrent users writing at the same time.
 - **Scraper fragility** — if Zonaprop, Argenprop, MercadoLibre, or Remax update their HTML structure, selectors in the corresponding scraper files may need to be updated.
-- **Geocoding rate limit** — Nominatim enforces 1 request/second. Geocoding a large session takes time. Adding an `OPENCAGE_API_KEY` improves hit rate but the rate limit stays.
+- **Geocoding** — [Georef](https://www.argentina.gob.ar/georef) is the default, with conservative rate and quota limits; large sessions take time. Matches require a street number and locality context and may be approximate. Previously failed addresses can be retried using **Geocodificar todas las búsquedas** or the session's geocode action. Provider outages and quota errors remain retryable. Optional Geoapify/OpenCage keys send addresses to those providers. Cache and quota files are stored next to `db.json`; keep them on the persistent volume.
+- **Public Nominatim** — automated geocoding does not use `nominatim.openstreetmap.org`. Its [usage policy](https://operations.osmfoundation.org/policies/nominatim/) discourages large or regular bulk requests; a self-hosted or third-party endpoint can be configured instead.
 - **Argentina only** — geocoding is scoped to Argentina. Adapting to other countries requires changes in `geocoder.py`.
 
 ---
@@ -280,7 +284,7 @@ docker compose up --build   # rebuilds the image with the latest code
 | Backend | Python 3.11, FastAPI, Uvicorn |
 | Scraping | Playwright, playwright-stealth, BeautifulSoup4 |
 | Scheduling | APScheduler |
-| Geocoding | Nominatim, OpenCage (optional) |
+| Geocoding | Georef; Geoapify, OpenCage or private Nominatim (optional) |
 | Frontend | Alpine.js, Tailwind CSS (CDN), Leaflet.js |
 | Database | JSON flat file with file locking |
 

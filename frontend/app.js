@@ -90,6 +90,8 @@ function app() {
     sessionsActionsOpen: false,
     bulkUpdate: { running: false, completed: 0, total: 0, currentLabel: '' },
     _bulkUpdateToken: 0,
+    bulkGeocode: { running: false, completed: 0, total: 0, currentLabel: '', progress: 0, totalAddresses: 0 },
+    _bulkGeocodeToken: 0,
     showManualAddressModal: false,
     _savingAddressId: null,
     _savedAddressId: null,
@@ -526,6 +528,8 @@ function app() {
     logout() {
       this._bulkUpdateToken++;
       this.bulkUpdate = { running: false, completed: 0, total: 0, currentLabel: '' };
+      this._bulkGeocodeToken++;
+      this.bulkGeocode = { running: false, completed: 0, total: 0, currentLabel: '', progress: 0, totalAddresses: 0 };
       this.stopPolling();
       this.stopGeocoding();
       this.username = '';
@@ -697,7 +701,7 @@ function app() {
     },
 
     async updateAllSearches() {
-      if (this.bulkUpdate.running || !this.sessions.length) return;
+      if (this.bulkUpdate.running || this.bulkGeocode.running || !this.sessions.length) return;
 
       const username = this.username;
       const token = ++this._bulkUpdateToken;
@@ -782,6 +786,83 @@ function app() {
         if (token === this._bulkUpdateToken) {
           this.bulkUpdate.running = false;
           this.bulkUpdate.currentLabel = '';
+        }
+      }
+    },
+
+    async geocodeAllSearches() {
+      if (this.bulkGeocode.running || this.bulkUpdate.running || !this.sessions.length) return;
+
+      const username = this.username;
+      const token = ++this._bulkGeocodeToken;
+      const targets = [...this.sessions];
+      const isCurrent = () => token === this._bulkGeocodeToken && username === this.username;
+      let completed = 0, alreadyDone = 0, failed = 0, stopped = false;
+      this.sessionsActionsOpen = false;
+      this.bulkGeocode = { running: true, completed: 0, total: targets.length, currentLabel: '', progress: 0, totalAddresses: 0 };
+
+      try {
+        for (const session of targets) {
+          if (!isCurrent()) return;
+          this.bulkGeocode.currentLabel = session.label || 'Sin nombre';
+          this.bulkGeocode.progress = 0;
+          this.bulkGeocode.totalAddresses = 0;
+          while (true) {
+            let started;
+            try {
+              started = await api('POST', `/users/${username}/sessions/${session.id}/geocode?force=true`);
+            } catch (e) {
+              if (!isCurrent()) return;
+              failed++;
+              break;
+            }
+            if (!isCurrent()) return;
+            if (started.already_done) {
+              alreadyDone++;
+              break;
+            }
+            if (!started.run_id) {
+              failed++;
+              break;
+            }
+            let status;
+            try {
+              do {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                if (!isCurrent()) return;
+                status = await api('GET', `/runs/${started.run_id}`);
+                if (!isCurrent()) return;
+                this.bulkGeocode.progress = status.progress || 0;
+                this.bulkGeocode.totalAddresses = status.total || 0;
+                if (this.screen === 'session' && this.currentSession?.id === session.id && status.updated_houses?.length) {
+                  this._mergeGeocodeDelta(status.updated_houses);
+                  if (this.mapView && this._map) this.renderPins();
+                }
+              } while (status.status === 'running');
+            } catch (e) {
+              if (!isCurrent()) return;
+              // The run may still be active; do not start another concurrently.
+              failed++;
+              stopped = true;
+              break;
+            }
+            // An existing run may not have retried previous failures. Wait for
+            // it, then request the forced pass again before moving on.
+            if (started.already_running) continue;
+            if (status.status === 'done') completed++;
+            else failed++;
+            break;
+          }
+          if (stopped) break;
+          this.bulkGeocode.completed++;
+        }
+        if (!isCurrent()) return;
+        const summary = `${completed} búsquedas procesadas, ${alreadyDone} sin direcciones pendientes${failed ? `, ${failed} con error` : ''}.`;
+        this.showToast(`${stopped ? 'Geocodificación detenida' : 'Geocodificación completa'}: ${summary}`, failed || stopped ? 'error' : 'success');
+      } finally {
+        if (isCurrent()) {
+          this.bulkGeocode.running = false;
+          this.bulkGeocode.currentLabel = '';
         }
       }
     },
@@ -953,6 +1034,10 @@ function app() {
       h.lat = null;
       h.lng = null;
       h.geocode_failed = false;
+      h.geocode_provider = null;
+      h.geocode_precision = null;
+      h.geocode_attribution = null;
+      h.geocode_attribution_url = null;
       this._invalidateCache();
       if (this._markerLayer) {
         const m = this._markerMap[h.internal_id];
@@ -993,14 +1078,18 @@ function app() {
               setTimeout(poll, 1500);
             } else {
               this._geocodingDetailHouseId = null;
-              if (status.status === 'done' && this.detailHouse?.internal_id === houseId) {
+              if ((status.status === 'done' || status.status === 'partial') && this.detailHouse?.internal_id === houseId) {
                 const updated = await api('GET', `/houses/${houseId}`);
                 Object.assign(this.detailHouse, {
                   lat: updated.lat, lng: updated.lng, geocode_failed: updated.geocode_failed,
+                  geocode_provider: updated.geocode_provider, geocode_precision: updated.geocode_precision,
+                  geocode_attribution: updated.geocode_attribution, geocode_attribution_url: updated.geocode_attribution_url,
                 });
                 const idx = this.houses.findIndex(h => h.internal_id === houseId);
                 if (idx !== -1) Object.assign(this.houses[idx], {
                   lat: updated.lat, lng: updated.lng, geocode_failed: updated.geocode_failed,
+                  geocode_provider: updated.geocode_provider, geocode_precision: updated.geocode_precision,
+                  geocode_attribution: updated.geocode_attribution, geocode_attribution_url: updated.geocode_attribution_url,
                 });
                 this._invalidateCache();
                 // New coordinates just arrived while the fullscreen modal is
@@ -1027,6 +1116,7 @@ function app() {
         const data = await res.json();
         if (data.already_done) return;
         this._geocodeRunId = data.run_id;
+        this._geocodeRunOwned = !data.already_running;
         if (!this._geocodePoll) {
           this._geocodePoll = setInterval(() => this.pollGeocode(data.run_id), 2000);
         }
@@ -1222,6 +1312,7 @@ function app() {
         const data = await api('POST', `/users/${this.username}/sessions/${this.currentSession.id}/geocode?force=true`);
         if (data.already_done) return;
         this._geocodeRunId = data.run_id;
+        this._geocodeRunOwned = !data.already_running;
         this.geocodeStatus = { status: 'running', message: 'Geocodificando…', progress: 0, total: 0 };
         this._geocodePoll = setInterval(() => this.pollGeocode(data.run_id), 2000);
         if (this.mapView) await this.initMap();
@@ -1235,7 +1326,7 @@ function app() {
         async () => {
           try {
             await api('DELETE', `/users/${this.username}/sessions/${this.currentSession.id}/geodata`);
-            this.houses.forEach(h => { h.lat = null; h.lng = null; h.geocode_failed = false; });
+            this.houses.forEach(h => { h.lat = null; h.lng = null; h.geocode_failed = false; h.geocode_provider = null; h.geocode_precision = null; h.geocode_attribution = null; h.geocode_attribution_url = null; });
             this._invalidateCache();
             if (this._markerLayer) this._markerLayer.clearLayers();
           } catch (e) { this.showToast('Error al borrar los datos de geo.', 'error'); }

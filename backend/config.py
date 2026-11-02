@@ -23,6 +23,14 @@ class Settings:
     opencage_api_key: str = field(
         default_factory=lambda: os.environ.get("OPENCAGE_API_KEY", "")
     )
+    geoapify_api_key: str = field(
+        default_factory=lambda: os.environ.get("GEOAPIFY_API_KEY", "")
+    )
+    # Optional self-hosted/third-party Nominatim search endpoint. Public OSMF
+    # Nominatim is deliberately not a default for bulk or scheduled lookups.
+    nominatim_url: str = field(
+        default_factory=lambda: os.environ.get("NOMINATIM_URL", "")
+    )
     geocode_batch_size: int = 10
     nominatim_interval: float = 1.1  # seconds between Nominatim sends
     nominatim_ua: str = "CasaTracker/1.0 (personal-use geocoder)"

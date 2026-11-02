@@ -31,10 +31,13 @@ const mapMethods = {
   geocodeStatus: null,
   _geocodePoll: null,
   _geocodeRunId: null,
+  _geocodeRunOwned: false,
   _geocodingDetailHouseId: null,
   _mapFocusHouse: null,
   _focusActive: false,
   _markerMap: {},
+  _mapSourceAttributions: [],
+  _detailSourceAttributions: [],
   // Mini map embedded in the fullscreen house-detail modal.
   _detailMap: null,
   _detailMapMarker: null,
@@ -107,7 +110,7 @@ const mapMethods = {
       this._mapUserMoved = true;
     }
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | <a href="https://www.argentina.gob.ar/georef">Servicio Georef</a> | <a href="https://www.geoapify.com/">Powered by Geoapify</a>',
       maxZoom: 19,
       fadeAnimation: false,     // tiles pop in instantly, no fade compositing
       updateWhenZooming: false,  // don't fetch tiles mid-zoom, only when it settles
@@ -144,6 +147,7 @@ const mapMethods = {
 
     const all = this.filteredHouses;
     const placed = all.filter(h => h.lat != null && h.lng != null);
+    this._syncGeocodeAttribution(this._map, placed, '_mapSourceAttributions');
     this.mapMissingCount = all.filter(h => h.lat == null && (h.manual_address || h.address)).length;
 
     // Incremental update: remove markers for houses no longer in filtered set
@@ -165,13 +169,13 @@ const mapMethods = {
         existing.setLatLng([h.lat, h.lng]);
         existing.setStyle(this.markerStyle(h));
         existing.setTooltipContent(
-          `<b>${this.escHtml(h.manual_address || h.address || '')}</b><br>${this.escHtml(this.formatPrice(h.price, h.currency))}`
+          `<b>${this.escHtml(h.manual_address || h.address || '')}</b><br>${this.escHtml(this.formatPrice(h.price, h.currency))}${h.geocode_precision === 'aproximada' ? '<br>Ubicación aproximada' : ''}`
         );
       } else {
         // Create new marker
         const marker = markRaw(L.circleMarker([h.lat, h.lng], this.markerStyle(h)));
         marker.bindTooltip(
-          `<b>${this.escHtml(h.manual_address || h.address || '')}</b><br>${this.escHtml(this.formatPrice(h.price, h.currency))}`
+          `<b>${this.escHtml(h.manual_address || h.address || '')}</b><br>${this.escHtml(this.formatPrice(h.price, h.currency))}${h.geocode_precision === 'aproximada' ? '<br>Ubicación aproximada' : ''}`
         );
         markRaw(marker._tooltip);
         // Desktop multi-select: Ctrl/Cmd+click toggles the pin in/out of the
@@ -246,6 +250,30 @@ const mapMethods = {
     if (layers.length > 0) {
       this._map.fitBounds(L.featureGroup(layers).getBounds().pad(0.35), { maxZoom: 14 });
     }
+  },
+
+  _syncGeocodeAttribution(map, houses, stateKey) {
+    if (!map?.attributionControl) return;
+    const next = new Set();
+    for (const h of houses) {
+      if (!h.geocode_attribution) continue;
+      const text = this.escHtml(h.geocode_attribution);
+      let html = text;
+      try {
+        const url = new URL(h.geocode_attribution_url);
+        if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password) {
+          html = `<a href="${this.escHtml(url.href)}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+        }
+      } catch (e) { /* source without a valid URL: show text only */ }
+      next.add(html);
+    }
+    for (const attribution of this[stateKey]) {
+      if (!next.has(attribution)) map.attributionControl.removeAttribution(attribution);
+    }
+    for (const attribution of next) {
+      if (!this[stateKey].includes(attribution)) map.attributionControl.addAttribution(attribution);
+    }
+    this[stateKey] = [...next];
   },
 
   updateMarkerColor(h) {
@@ -532,6 +560,7 @@ const mapMethods = {
     }
     this._markerLayer = null;
     this._markerMap = {};
+    this._mapSourceAttributions = [];
     if (this._mapRO) { this._mapRO.disconnect(); this._mapRO = null; }
     if (this._boxHandlers) {
       const { host, onDown, onMove, onUp, onCancel, onClick } = this._boxHandlers;
@@ -589,7 +618,7 @@ const mapMethods = {
       scrollWheelZoom: false,   // page scroll must not get hijacked inside the modal
     }).setView([h.lat, h.lng], 16));
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | <a href="https://www.argentina.gob.ar/georef">Servicio Georef</a> | <a href="https://www.geoapify.com/">Powered by Geoapify</a>',
       maxZoom: 19,
       fadeAnimation: false,
       updateWhenZooming: false,
@@ -610,6 +639,7 @@ const mapMethods = {
   // when it has no coordinates yet).
   updateDetailMap(h) {
     if (!this._detailMap || !h) return;
+    this._syncGeocodeAttribution(this._detailMap, [h], '_detailSourceAttributions');
     if (h.lat == null || h.lng == null) {
       if (this._detailMapMarker) {
         this._detailMap.removeLayer(this._detailMapMarker);
@@ -639,14 +669,16 @@ const mapMethods = {
       this._detailMap = null;
     }
     this._detailMapMarker = null;
+    this._detailSourceAttributions = [];
   },
 
   stopGeocoding() {
     if (this._geocodePoll) { clearInterval(this._geocodePoll); this._geocodePoll = null; }
-    if (this._geocodeRunId) {
+    if (this._geocodeRunId && this._geocodeRunOwned) {
       fetch(`/api/runs/${this._geocodeRunId}`, { method: 'DELETE' }).catch(() => {});
-      this._geocodeRunId = null;
     }
+    this._geocodeRunId = null;
+    this._geocodeRunOwned = false;
     this.geocodeStatus = null;
   },
 
@@ -676,6 +708,7 @@ const mapMethods = {
         const data = await res.json();
         if (!data.already_done && data.run_id) {
           this._geocodeRunId = data.run_id;
+          this._geocodeRunOwned = !data.already_running;
           this.geocodeStatus = { status: 'running', message: 'Geocodificando…', progress: 0, total: 0 };
           this._geocodePoll = setInterval(() => this.pollGeocode(data.run_id), 2000);
         } else if (data.already_done) {
@@ -715,7 +748,8 @@ const mapMethods = {
       clearInterval(this._geocodePoll);
       this._geocodePoll = null;
       this._geocodeRunId = null;
-      if (status.status === 'done') {
+      this._geocodeRunOwned = false;
+      if (status.status === 'done' || status.status === 'partial') {
         if (status.updated_houses?.length) {
           this._mergeGeocodeDelta(status.updated_houses);
         } else {
@@ -723,15 +757,19 @@ const mapMethods = {
           this.setHouses(d.houses || []);
         }
         this.geocodeStatus = null;
-        // Remember how many houses are still ungeocoded so reopen doesn't re-POST.
-        this._geocodeAttemptedSession = this.currentSession?.id;
-        this._geocodeAttemptedCount = this.houses.filter(h => h.lat == null && (h.manual_address || h.address)).length;
+        // A temporary provider error must be retryable on the next map open.
+        this._geocodeAttemptedSession = status.status === 'done' ? this.currentSession?.id : null;
+        this._geocodeAttemptedCount = status.status === 'done'
+          ? this.houses.filter(h => h.lat == null && (h.manual_address || h.address)).length : -1;
+        if (status.status === 'partial') this.showToast(status.message, 'error');
       }
+      if (status.status === 'error') this.showToast(status.message || 'Error al geocodificar.', 'error');
       if (this.mapView) await this.initMap();
     } catch (e) {
       clearInterval(this._geocodePoll);
       this._geocodePoll = null;
       this._geocodeRunId = null;
+      this._geocodeRunOwned = false;
       if (this.mapView) await this.initMap();
     }
   },
@@ -745,6 +783,10 @@ const mapMethods = {
       h.lat = u.lat;
       h.lng = u.lng;
       h.geocode_failed = u.geocode_failed;
+      h.geocode_provider = u.geocode_provider;
+      h.geocode_precision = u.geocode_precision;
+      h.geocode_attribution = u.geocode_attribution;
+      h.geocode_attribution_url = u.geocode_attribution_url;
     }
     this._invalidateCache();
   },

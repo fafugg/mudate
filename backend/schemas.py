@@ -65,6 +65,10 @@ class HouseDict(TypedDict, total=False):
     lat: Optional[float]
     lng: Optional[float]
     geocode_failed: bool
+    geocode_provider: Optional[str]
+    geocode_precision: Optional[str]
+    geocode_attribution: Optional[str]
+    geocode_attribution_url: Optional[str]
     # Content
     description: Optional[str]
     images: List[str]

@@ -111,7 +111,7 @@ scrape. Watch the terminal for errors before setting up the service.
   window and the scrape fails with a missing-display error.
 - `DB_PATH` must point into an existing directory. `storage.py` creates the
   file but not the folder.
-- Optional: add `OPENCAGE_API_KEY=...` for better geocoding.
+- Optional: add `GEOAPIFY_API_KEY=...` for an additional geocoding fallback.
 
 Press `Ctrl+C` when the test scrape finishes.
 
@@ -249,7 +249,7 @@ Back up `~/mudate/data/db.json` and its sibling `db.json.geocache.json`
 | Scrape says the portal blocked it | Delete the headless profile and retry: `rm -rf ~/.mudate_browser_headless`, then restart the service. |
 | Service dies right after boot | `journalctl --user -u mudate -n 100 --no-pager`; usually a wrong path, missing `data/` directory, or no linger enabled. |
 | `playwright: command not found` | Use the full path: `.venv/bin/playwright`. |
-| Geocoding stalls | Nominatim is rate-limited (~1 req/s). Add `OPENCAGE_API_KEY` for a fallback. |
+| Geocoding stalls | Georef is rate-limited and large searches take time. Check provider availability or configure an optional `GEOAPIFY_API_KEY` fallback. |
 | Pi runs out of memory mid-scrape | Add swap (step 6), cap `MemoryMax`, or run fewer sessions. |
 
 ---

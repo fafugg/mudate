@@ -301,6 +301,10 @@ async def update_house(house_id: str, body: UpdateHouseRequest):
         if "manual_address" in body.model_fields_set:
             db["houses"][house_id]["manual_address"] = body.manual_address
             db["houses"][house_id]["geocode_failed"] = False
+            db["houses"][house_id].pop("geocode_provider", None)
+            db["houses"][house_id].pop("geocode_precision", None)
+            db["houses"][house_id].pop("geocode_attribution", None)
+            db["houses"][house_id].pop("geocode_attribution_url", None)
             db["houses"][house_id]["lat"] = None
             db["houses"][house_id]["lng"] = None
     atomic_update(update)
@@ -381,7 +385,7 @@ async def geocode_session(
         house = db["houses"].get(hid)
         if not house or not (house.get("manual_address") or house.get("address")):
             continue
-        if house.get("lat") is not None:
+        if house.get("lat") is not None and house.get("lng") is not None:
             continue  # already geocoded
         if house.get("geocode_failed") and not force:
             continue  # previously failed, skip unless forced
@@ -547,6 +551,10 @@ async def clear_geodata(username: str, session_id: str):
                 db["houses"][hid]["lat"] = None
                 db["houses"][hid]["lng"] = None
                 db["houses"][hid]["geocode_failed"] = False
+                db["houses"][hid].pop("geocode_provider", None)
+                db["houses"][hid].pop("geocode_precision", None)
+                db["houses"][hid].pop("geocode_attribution", None)
+                db["houses"][hid].pop("geocode_attribution_url", None)
     atomic_update(update)
     return {"ok": True}
 
