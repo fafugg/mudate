@@ -29,6 +29,7 @@ function app() {
     username: '',
     sessions: [],
     currentSession: null,
+    isAllView: false,
     houses: [],
     loading: false,
     loadingMsg: '',
@@ -530,6 +531,7 @@ function app() {
       this.username = '';
       this.sessions = [];
       this.currentSession = null;
+      this.isAllView = false;
       this.setHouses([]);
       this.runId = null;
       this.runStatus = null;
@@ -550,6 +552,7 @@ function app() {
       this.loading = true; this.loadingMsg = 'Cargando...';
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       this.stopGeocoding();
+      this.isAllView = false;
       this.filterReview = ['', 'en_duda', 'interesante', 'contactar'];
       this.filterType = [];
       this.filterStatus = ['active'];
@@ -609,6 +612,7 @@ function app() {
       try {
         const data = await api('GET', `/users/${this.username}/sessions/${sessionId}`);
         this.currentSession = data;
+        this.isAllView = false;
         this.setHouses(data.houses || []);
         if (sessionId !== this.runSessionId) {
           this.runStatus = null; this.runDismissed = false;
@@ -616,24 +620,47 @@ function app() {
         } else if (this.isRunning && !this._pollInterval) {
           this.startPolling();
         }
-        this.tablePage = 1;
-        this.filterReview = ['', 'en_duda', 'interesante', 'contactar'];
-        this.filterType = [];
-        this.filterStatus = ['active'];
-        this.filterMinPrice = '';
-        this.filterMaxPrice = '';
-        this.filterAddress = '';
-        this.filterRealEstate = '';
-        this.filtersOpen = false;
-        this.mapView = false;
-        this.cardView = localStorage.getItem('houseListView') === 'card';
-        this.destroyMap();
-        this._savedCenter = null;
-        this._savedZoom = null;
-        this.stopGeocoding();
+        this._resetSessionView();
         this.screen = 'session';
       } catch (e) { this.showToast('Error al cargar la búsqueda.', 'error'); }
       finally { this.loading = false; this.loadingMsg = ''; }
+    },
+
+    // "Ver todo": every property across every search, shown in the same table /
+    // card / map screen. Not a real session (id: null), so every action that
+    // needs one (scrape, geocode, dedup) is hidden while isAllView is true.
+    async openAllHouses() {
+      this.loading = true; this.loadingMsg = 'Cargando...';
+      try {
+        const data = await api('GET', `/users/${this.username}/houses`);
+        this.currentSession = { id: null, label: 'Todos', search_sources: [] };
+        this.isAllView = true;
+        this.setHouses(data.houses || []);
+        this.runStatus = null; this.runDismissed = false;
+        this.stopPolling();
+        this._resetSessionView();
+        this.screen = 'session';
+      } catch (e) { this.showToast('Error al cargar los registros.', 'error'); }
+      finally { this.loading = false; this.loadingMsg = ''; }
+    },
+
+    /** Shared table/map state reset when opening a session or "Todos". */
+    _resetSessionView() {
+      this.tablePage = 1;
+      this.filterReview = ['', 'en_duda', 'interesante', 'contactar'];
+      this.filterType = [];
+      this.filterStatus = ['active'];
+      this.filterMinPrice = '';
+      this.filterMaxPrice = '';
+      this.filterAddress = '';
+      this.filterRealEstate = '';
+      this.filtersOpen = false;
+      this.mapView = false;
+      this.cardView = localStorage.getItem('houseListView') === 'card';
+      this.destroyMap();
+      this._savedCenter = null;
+      this._savedZoom = null;
+      this.stopGeocoding();
     },
 
     // ── Session CRUD ─────────────────────────────────────────────────────────
@@ -990,7 +1017,7 @@ function app() {
     },
 
     async _geocodeAfterAddressEdit() {
-      if (!this.currentSession) return;
+      if (!this.currentSession?.id) return;
       if (this._geocodeRunId) return;
       try {
         const res = await fetch(
@@ -1353,7 +1380,7 @@ function app() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `casas_${this.currentSession.id.slice(0, 8)}.csv`;
+      a.download = `casas_${this.isAllView ? 'todas' : this.currentSession.id.slice(0, 8)}.csv`;
       a.click();
       URL.revokeObjectURL(url);
     },

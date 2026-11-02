@@ -96,6 +96,7 @@ mudate/
 | **Cross-engine dedup** | Fuzzy address matching (Jaccard ≥ 0.75) with price/m² tolerance |
 | **Same-engine dedup** | Reactivation detection: merges re-listed properties from the same portal |
 | **Bulk actions** | Multi-select via table checkboxes, Ctrl+click on map pins, or Ctrl+drag a box over the map (desktop); batch review + compare (2-5 properties side by side) |
+| **All listings view** | "Ver todo" on the sessions list opens every property across all searches in the same table/card/map screen (`GET /api/users/{username}/houses`), with a fixed "Todos" breadcrumb and no session-scoped actions |
 | **Export CSV** | Respects active filters; includes BOM for Excel |
 | **Export/Import DB** | Full db.json backup & restore via admin UI |
 | **Auto-refresh** | APScheduler re-scrapes all sessions daily at 08:00 ART |
@@ -118,6 +119,7 @@ Deduplication: houses with same `search_engine_id` or URL across sessions are me
 | GET | `/api/users/{username}` | Get user + sessions list |
 | POST | `/api/users/{username}/sessions` | Create session |
 | GET/DELETE | `/api/users/{username}/sessions/{id}` | Get/delete session + houses |
+| GET | `/api/users/{username}/houses` | All houses across every search, deduplicated (the "Ver todo" view) |
 | PUT | `/api/users/{username}/sessions/{id}` | Update label/sources |
 | POST | `/api/users/{username}/sessions/{id}/run` | Launch scrape (background) |
 | POST | `/api/users/{username}/sessions/{id}/geocode` | Launch geocoding (background) |

@@ -655,6 +655,11 @@ const mapMethods = {
       await this.initMap();
       return;
     }
+    // "Todos" is an aggregate view with no session to geocode against.
+    if (!this.currentSession?.id) {
+      await this.initMap();
+      return;
+    }
     // Only auto-start geocoding when the set of ungeocoded houses actually
     // changed since the last attempt for this session. Skips the redundant
     // "already_done" POST every time the map is reopened with the same data.

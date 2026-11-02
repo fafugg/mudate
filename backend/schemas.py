@@ -162,6 +162,15 @@ class SessionResponse(BaseModel):
     houses: List[Dict[str, Any]] = []
 
 
+class AllHousesResponse(BaseModel):
+    """Response for GET /api/users/{username}/houses.
+
+    Every house of the user across all their searches, without duplicates
+    (a house shared by two searches is stored once in db.json).
+    """
+    houses: List[Dict[str, Any]] = []
+
+
 class RunResponse(BaseModel):
     """Response for GET /api/runs/{id}."""
     id: str

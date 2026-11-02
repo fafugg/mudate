@@ -524,6 +524,9 @@ Merges selected same-engine duplicate groups. For each group: updates the old ho
 
 ### Backend — `main.py`
 
+#### `GET /api/users/{username}/houses`
+Returns every house of the user across all their sessions, deduplicated by `internal_id` (a house shared by two searches is stored once). Feeds the "Ver todo" aggregate view, which reuses the session table/card/map screen without a real session behind it.
+
 #### `POST /api/users/{username}/sessions/{session_id}/run`
 Launches a scrape as a FastAPI background task. Returns immediately with a `run_id`. Rejects duplicate runs for the same session (returns `already_running: true`).
 
@@ -565,6 +568,9 @@ Main Alpine component. Source is split across `app.js` (core logic), `map.js` (L
 
 #### `selectSession(sessionId)`
 Loads a session from the API, sets `this.houses`, resets all filter state and pagination, and switches the screen to `'session'`. Called when opening a session from the list or after creating a new one.
+
+#### `openAllHouses()`
+Loads `GET /api/users/{username}/houses` into the same table/card/map screen as a normal session. `currentSession` becomes a placeholder (`id: null`, label `"Todos"`) and `isAllView` hides every session-scoped action (scrape, geocode, dedup); filters, sorting, map, bulk review and CSV export keep working. Entry point: the **Ver todo** button next to **Nueva búsqueda**.
 
 #### `goBack()`
 Returns to the session list. Refreshes the session list from the API, resets all filter state, and stops any active geocoding poll.

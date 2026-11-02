@@ -25,6 +25,7 @@ from scheduler import get_scheduler_status, setup_scheduler
 from deduplicator import apply_dedup, find_duplicates
 from same_engine_dedup import apply_same_engine_dedup, find_same_engine_duplicates
 from schemas import (
+    AllHousesResponse,
     BulkReviewRequest,
     CreateSessionRequest,
     DedupApplyRequest,
@@ -187,6 +188,31 @@ async def get_session(username: str, session_id: str):
     session = _session_or_404(db, username, session_id)
     houses = [db["houses"][hid] for hid in session["house_ids"] if hid in db["houses"]]
     return {**session, "houses": houses}
+
+
+@app.get("/api/users/{username}/houses", response_model=AllHousesResponse)
+async def get_all_houses(username: str):
+    """Devuelve todas las propiedades del usuario entre todas sus búsquedas.
+
+    Una propiedad que aparece en más de una búsqueda se guarda una sola vez en
+    db.json, así que la unión se deduplica por internal_id.
+    """
+    username = _validate_username(username)
+    db = read_db()
+    user_data = db["users"].get(username, {"sessions": {}})
+    sessions = list(user_data.get("sessions", {}).values())
+    sessions.sort(key=lambda s: s.get("last_executed") or s["created_at"], reverse=True)
+    seen = set()
+    houses = []
+    for session in sessions:
+        for hid in session.get("house_ids", []):
+            if hid in seen:
+                continue
+            seen.add(hid)
+            house = db["houses"].get(hid)
+            if house is not None:
+                houses.append(house)
+    return {"houses": houses}
 
 
 @app.delete("/api/users/{username}/sessions/{session_id}", response_model=OkResponse)
